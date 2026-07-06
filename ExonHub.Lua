@@ -6,6 +6,7 @@
 		local VirtualUser = game:GetService("VirtualUser")
 		local TweenService = game:GetService("TweenService")
 		local RunService = game:GetService("RunService")
+		local CollectionService = game:GetService("CollectionService")
 
 		if game.PlaceId ~= ALLOWED_PLACE_ID then
 			local player = Players.LocalPlayer
@@ -37,14 +38,11 @@
 		local NODES_PATH = { "Scene", "ResourceNodes1" }
 		local FOLDER_WAIT = 30
 		local COLLECT_POLL = 0.1
-		local COLLECT_WAIT = 0.35
+		local COLLECT_WAIT = 0.3
 		local COLLECT_RADIUS = 8
-		local COLLECT_HOLD = 0.4
-		local WALK_TIMEOUT = 2.5
-		local MAX_FAILS_BEFORE_SKIP = 3
-		local SKIP_SECONDS = 32
-		local APPROACH_DISTANCE = 4
-		local ORB_FOLLOW_SPEED = 320
+		local ORB_FOLLOW_SPEED = 300
+		local ORB_COLLECT_PAUSE_MIN = 0.3
+		local ORB_COLLECT_PAUSE_MAX = 0.3
 		local MISC_TP_LOCATIONS = {
 			{ label = "Ground", position = Vector3.new(1303.301, 93.754, -71.574) },
 			{ label = "Cave", position = Vector3.new(2078.066, 208.596, -981.986) },
@@ -72,8 +70,8 @@
 		local EXONHUB_TOPBAR_ICON_SIZE = 56
 		local EXONHUB_ICON_ROTATION_SPEED = 90
 
-		-- Anti-cheat: only enter roam after 3 real collect failures
-		local AC_MITIGATION_TIME = 30
+		local MAX_FAILS_BEFORE_SKIP = 3
+		local SKIP_SECONDS = 32
 
 		local H = {}
 		local S = {
@@ -82,9 +80,6 @@
 			farmLoopActive = false,
 			skipUntil = {},
 			failCount = {},
-			mitigationUntil = 0,
-			consecutiveGlobalFails = 0,
-			roamIndex = 1,
 			orbFirstSnapDone = false,
 			orbFollowTween = nil,
 			goldenEggTpInitialized = false,
@@ -111,13 +106,25 @@
 		autoBossFollowDefId = nil,
 		autoGoalsRunning = false,
 			autoGoalsLoopActive = false,
+			autoFishRunning = false,
+			autoFishLoopActive = false,
+			autoFishPhase = 0,
+			autoFishPhaseConn = nil,
+			suppressAutoFishSync = false,
+			autoUpgradeRodRunning = false,
+			autoUpgradeRodLoopActive = false,
+			autoUpgradeRodPending = false,
+			suppressAutoUpgradeRodSync = false,
 			autoGoalsScoredBalls = {},
 			autoGoalsBallSpawns = {},
 			autoGoalsLastKickBallName = nil,
 			autoGoalsGoalListener = nil,
 			clickerHadAeroAuto = false,
+			silentTrainModeActive = false,
 			autoGoalsBallCollisionBackup = {},
 			autoGoalsCollisionReady = false,
+			autoGoalsPhantomConn = nil,
+			autoGoalsPhantomBall = nil,
 			autoBossTargets = {
 				borock = true,
 				demon_king = true,
@@ -174,12 +181,17 @@
 			suppressAutoDeleteSkinsSync = false,
 			suppressAutoKillSync = false,
 			suppressAntiAfkSync = false,
+			suppressStreamerModeSync = false,
 			autoKillRunning = false,
 			autoKillLoopActive = false,
 			autoKillFollowTween = nil,
 			autoKillFollowConnection = nil,
 			antiAfkRunning = false,
 			antiAfkIdledConnection = nil,
+			streamerModeRunning = false,
+			streamerModeLoopActive = false,
+			streamerModeCharacterConn = nil,
+			streamerModeBackup = nil,
 			cachedSafeZoneRegions = nil,
 			usageStats = nil,
 			usageLastCheckpoint = nil,
@@ -204,6 +216,7 @@
 			iapData = nil,
 			petsInited = nil,
 			zapClient = nil,
+			fishingRodsData = nil,
 		}
 		local MIN_REBIRTH_TARGET_LEVEL = 100
 		local TRAIN_INTERVAL = 0.52
@@ -246,16 +259,33 @@
 		local AUTO_GOALS_NEAR_PLAYER_RADIUS = 16
 		local AUTO_GOALS_BALL_TO_PLAYER_STEPS = 10
 		local AUTO_GOALS_BALL_TO_PLAYER_STEP_WAIT = 0.03
+		local AUTO_GOALS_BALL_INSIDE_HOLD = 0.5
+		local AUTO_GOALS_BALL_INSIDE_SMOOTH_STEPS = 12
+		local AUTO_GOALS_BALL_INSIDE_SMOOTH_STEP_WAIT = 0.025
+		local AUTO_GOALS_BALL_ON_PLAYER_EMBED = 0.65
+		local AUTO_GOALS_UNDERGROUND_DEPTH = 28
+		local AUTO_GOALS_UNDERGROUND_DROP_STEPS = 8
+		local AUTO_GOALS_UNDERGROUND_TRAVEL_STEPS = 22
+		local AUTO_GOALS_UNDERGROUND_RISE_STEPS = 14
+		local AUTO_GOALS_UNDERGROUND_STEP_WAIT = 0.03
 		local AUTO_GOALS_GOAL_SLIDE_STEPS = 18
 		local AUTO_GOALS_GOAL_SLIDE_STEP_WAIT = 0.035
 		local AUTO_GOALS_SCORE_RADIUS = 20
 		local AUTO_GOALS_SPAWN_RADIUS = 28
 		local AUTO_GOALS_TOUCH_FORWARD_OFFSET = 2
 		local AUTO_GOALS_MIDFIELD_POSITION = Vector3.new(19380, 686.659, -1985.6)
+		local FISHING_ZONE_TAG = "FishingZone"
+		local FISHING_ZONE_Y_TOLERANCE = 6
+		local FISHING_PHASE_IDLE = 0
+		local AUTO_FISH_POLL = 0.35
+		local AUTO_FISH_CAST_TIMEOUT = 45
+		local AUTO_UPGRADE_ROD_POLL = 1.5
+		local AUTO_UPGRADE_ROD_BUY_COOLDOWN = 1.3
 		local AUTO_GOALS_BALL_ORDER = { "Ball2", "Ball1", "Ball" }
 		local AUTO_GOALS_BALL_COLLISION_GROUP = "ExonHubBeachBall"
 		local BEACH_BALLS_PATH = { "Scene", "Beach", "Beachballs" }
 		local BEACH_GOALS_PATH = { "Scene", "Beach", "Goals" }
+		local FISH_AREA_PATH = { "Scene", "Beach", "FishArea" }
 		local AUTO_BOSS_OPTION_LABELS = { "Borock", "Demon King" }
 		local AUTO_BOSS_LABEL_TO_ID = {
 			["Borock"] = "borock",
@@ -1335,6 +1365,32 @@
 			S.suppressAutoGoalsSync = false
 		end
 
+		function H.syncAutoFishToggle(state)
+			if S.suppressAutoFishSync or not UI.autoFishToggleElement or not UI.autoFishToggleElement.Set then
+				return
+			end
+			S.suppressAutoFishSync = true
+			pcall(function()
+				UI.autoFishToggleElement:Set(state)
+			end)
+			S.suppressAutoFishSync = false
+		end
+
+		function H.syncAutoUpgradeRodToggle(state)
+			if S.suppressAutoUpgradeRodSync or not UI.autoUpgradeRodToggleElement or not UI.autoUpgradeRodToggleElement.Set then
+				return
+			end
+			S.suppressAutoUpgradeRodSync = true
+			pcall(function()
+				UI.autoUpgradeRodToggleElement:Set(state)
+			end)
+			S.suppressAutoUpgradeRodSync = false
+		end
+
+		function H.shouldAutoGoalsBringBallToPlayer()
+			return S.autoFishRunning == true and S.autoGoalsRunning == true
+		end
+
 		function H.syncAutoKillToggle(state)
 			if S.suppressAutoKillSync or not UI.autoKillToggleElement or not UI.autoKillToggleElement.Set then
 				return
@@ -1355,6 +1411,17 @@
 				UI.antiAfkToggleElement:Set(state)
 			end)
 			S.suppressAntiAfkSync = false
+		end
+
+		function H.syncStreamerModeToggle(state)
+			if S.suppressStreamerModeSync or not UI.streamerModeToggleElement or not UI.streamerModeToggleElement.Set then
+				return
+			end
+			S.suppressStreamerModeSync = true
+			pcall(function()
+				UI.streamerModeToggleElement:Set(state)
+			end)
+			S.suppressStreamerModeSync = false
 		end
 
 		function H.syncAutoSellChestToggle(state)
@@ -1529,6 +1596,205 @@
 				return aero.Controllers.PlayerController
 			end
 			return nil
+		end
+
+		function H.getFishingController()
+			local aero = H.getGlobal().Aero
+			if aero and aero.Controllers then
+				return aero.Controllers.FishingController
+			end
+			return nil
+		end
+
+		function H.getFishingRodsData()
+			if C.fishingRodsData then
+				return C.fishingRodsData
+			end
+
+			local aeroFolder = ReplicatedStorage:FindFirstChild("Aero")
+			local sharedFolder = aeroFolder and aeroFolder:FindFirstChild("Shared")
+			local rodsScript = sharedFolder and sharedFolder:FindFirstChild("FishingRods")
+			if not rodsScript then
+				return nil
+			end
+
+			local ok, mod = pcall(require, rodsScript)
+			if ok and mod and mod.Data then
+				C.fishingRodsData = mod.Data
+				return mod.Data
+			end
+			return nil
+		end
+
+		function H.getFishingState()
+			local fishingController = H.getFishingController()
+			return fishingController and fishingController.State or nil
+		end
+
+		function H.buildFishingOwnedSet(state)
+			local owned = {}
+			if state and state.rods then
+				for _, entry in ipairs(state.rods) do
+					if entry and entry.id then
+						owned[entry.id] = true
+					end
+				end
+			end
+			return owned
+		end
+
+		function H.getBestOwnedFishingRodId(ownedSet)
+			local best = 0
+			for rodId, isOwned in pairs(ownedSet) do
+				if isOwned and type(rodId) == "number" and rodId > best then
+					best = rodId
+				end
+			end
+			return best
+		end
+
+		function H.getNextAffordableFishingRodId(ownedSet, shells, rodsData)
+			if not rodsData then
+				return nil
+			end
+
+			for rodId = 1, #rodsData do
+				if not ownedSet[rodId] then
+					local rod = rodsData[rodId]
+					local cost = rod and rod.Cost or 0
+					if shells >= cost then
+						return rodId
+					end
+					return nil
+				end
+			end
+
+			return nil
+		end
+
+		function H.getFishingRodName(rodId)
+			local rodsData = H.getFishingRodsData()
+			local rod = rodsData and rodsData[rodId]
+			return rod and rod.Name or ("Rod " .. tostring(rodId))
+		end
+
+		function H.fireFishingBuyRod(rodId)
+			local fishingController = H.getFishingController()
+			if fishingController and fishingController.RequestBuyRod then
+				local ok = pcall(function()
+					fishingController:RequestBuyRod(rodId)
+				end)
+				if ok then
+					return true
+				end
+			end
+
+			local zap = H.getZapClient()
+			if not zap or not zap.FishingBuyRod or not zap.FishingBuyRod.Fire then
+				return false
+			end
+
+			return pcall(function()
+				zap.FishingBuyRod.Fire(rodId)
+			end)
+		end
+
+		function H.fireFishingEquipRod(rodId)
+			local fishingController = H.getFishingController()
+			if fishingController and fishingController.RequestEquipRod then
+				local ok = pcall(function()
+					fishingController:RequestEquipRod(rodId)
+				end)
+				if ok then
+					return true
+				end
+			end
+
+			local zap = H.getZapClient()
+			if not zap or not zap.FishingEquipRod or not zap.FishingEquipRod.Fire then
+				return false
+			end
+
+			return pcall(function()
+				zap.FishingEquipRod.Fire(rodId)
+			end)
+		end
+
+		function H.shouldPauseAutoUpgradeRod()
+			return S.autoFishRunning == true and S.autoFishPhase ~= FISHING_PHASE_IDLE
+		end
+
+		function H.tryAutoUpgradeRodStep()
+			if S.autoUpgradeRodPending or H.shouldPauseAutoUpgradeRod() then
+				return false
+			end
+
+			local rodsData = H.getFishingRodsData()
+			if not rodsData then
+				return false
+			end
+
+			local state = H.getFishingState()
+			local ownedSet = H.buildFishingOwnedSet(state)
+			local shells = H.getCurrencyAmount("shells")
+			local equippedRod = state and state.equippedRod or 0
+			local buyRodId = H.getNextAffordableFishingRodId(ownedSet, shells, rodsData)
+
+			if buyRodId then
+				if H.fireFishingBuyRod(buyRodId) then
+					S.autoUpgradeRodPending = true
+					H.setStatus("Buying " .. H.getFishingRodName(buyRodId))
+					task.delay(AUTO_UPGRADE_ROD_BUY_COOLDOWN, function()
+						S.autoUpgradeRodPending = false
+						if S.autoUpgradeRodRunning then
+							H.fireFishingEquipRod(buyRodId)
+						end
+					end)
+					return true
+				end
+				return false
+			end
+
+			local bestOwned = H.getBestOwnedFishingRodId(ownedSet)
+			if bestOwned > 0 and equippedRod ~= bestOwned then
+				if H.fireFishingEquipRod(bestOwned) then
+					H.setStatus("Equipped " .. H.getFishingRodName(bestOwned))
+					return true
+				end
+			end
+
+			return false
+		end
+
+		function H.stopAutoUpgradeRodLoop()
+			S.autoUpgradeRodRunning = false
+			S.autoUpgradeRodPending = false
+		end
+
+		function H.startAutoUpgradeRodLoop()
+			if S.autoUpgradeRodLoopActive then
+				return
+			end
+			S.autoUpgradeRodLoopActive = true
+
+			task.spawn(function()
+				for _ = 1, 40 do
+					if H.getFishingRodsData() and (H.getFishingState() or H.getZapClient()) then
+						break
+					end
+					task.wait(0.25)
+				end
+
+				while S.autoUpgradeRodRunning do
+					if H.tryAutoUpgradeRodStep() then
+						task.wait(AUTO_UPGRADE_ROD_BUY_COOLDOWN)
+					else
+						task.wait(AUTO_UPGRADE_ROD_POLL)
+					end
+				end
+
+				S.autoUpgradeRodLoopActive = false
+			end)
 		end
 
 		function H.waitForPlayerController(timeout)
@@ -2753,6 +3019,157 @@
 			end
 		end
 
+		local STREAMER_MODE_NAME = "Exon Hub"
+
+		function H.getStreamerNameplateLabel()
+			local character = player.Character
+			if not character then
+				return nil
+			end
+			local head = character:FindFirstChild("Head")
+			if not head then
+				return nil
+			end
+			local nameplate = head:FindFirstChild("PlayerNameplate")
+			if not nameplate then
+				return nil
+			end
+			local frame = nameplate:FindFirstChild("Frame")
+			if not frame then
+				return nil
+			end
+			local label = frame:FindFirstChild("PlayerName")
+			if label and (label:IsA("TextLabel") or label:IsA("TextButton") or label:IsA("TextBox")) then
+				return label
+			end
+			return nil
+		end
+
+		function H.getStreamerPortraitImages()
+			local hud = playerGui:FindFirstChild("HUD")
+			if not hud then
+				return nil, nil
+			end
+			local leftHud = hud:FindFirstChild("LeftHUD")
+			local frame = leftHud and leftHud:FindFirstChild("Frame")
+			local portraitFg = frame and frame:FindFirstChild("PortraitFG")
+			if not portraitFg then
+				return nil, nil
+			end
+			local portraitImage = portraitFg:FindFirstChild("PortraitImage")
+			local portraitBg = portraitFg:FindFirstChild("PortraitBG")
+			local imageOk = portraitImage and portraitImage:IsA("ImageLabel")
+			local bgOk = portraitBg and portraitBg:IsA("ImageLabel")
+			return imageOk and portraitImage or nil, bgOk and portraitBg or nil
+		end
+
+		function H.captureStreamerModeBackup()
+			if S.streamerModeBackup then
+				return
+			end
+
+			local backup = {
+				displayName = player.DisplayName,
+				nameplateText = nil,
+				portraitImage = nil,
+				portraitBg = nil,
+			}
+
+			local nameplate = H.getStreamerNameplateLabel()
+			if nameplate then
+				backup.nameplateText = nameplate.Text
+			end
+
+			local portraitImage, portraitBg = H.getStreamerPortraitImages()
+			if portraitImage then
+				backup.portraitImage = portraitImage.Image
+			end
+			if portraitBg then
+				backup.portraitBg = portraitBg.Image
+			end
+
+			S.streamerModeBackup = backup
+		end
+
+		function H.applyStreamerModeVisuals()
+			pcall(function()
+				player.DisplayName = STREAMER_MODE_NAME
+			end)
+
+			local nameplate = H.getStreamerNameplateLabel()
+			if nameplate then
+				nameplate.Text = STREAMER_MODE_NAME
+			end
+
+			local portraitImage, portraitBg = H.getStreamerPortraitImages()
+			if portraitImage then
+				portraitImage.Image = EXONHUB_ICON_ASSET
+			end
+			if portraitBg then
+				portraitBg.Image = EXONHUB_ICON_ASSET
+			end
+		end
+
+		function H.restoreStreamerModeVisuals()
+			local backup = S.streamerModeBackup
+			if not backup then
+				return
+			end
+
+			pcall(function()
+				player.DisplayName = backup.displayName
+			end)
+
+			local nameplate = H.getStreamerNameplateLabel()
+			if nameplate and backup.nameplateText ~= nil then
+				nameplate.Text = backup.nameplateText
+			end
+
+			local portraitImage, portraitBg = H.getStreamerPortraitImages()
+			if portraitImage and backup.portraitImage ~= nil then
+				portraitImage.Image = backup.portraitImage
+			end
+			if portraitBg and backup.portraitBg ~= nil then
+				portraitBg.Image = backup.portraitBg
+			end
+
+			S.streamerModeBackup = nil
+		end
+
+		function H.stopStreamerModeLoop()
+			S.streamerModeRunning = false
+			if S.streamerModeCharacterConn then
+				pcall(function()
+					S.streamerModeCharacterConn:Disconnect()
+				end)
+				S.streamerModeCharacterConn = nil
+			end
+		end
+
+		function H.startStreamerModeLoop()
+			if S.streamerModeLoopActive then
+				return
+			end
+			S.streamerModeLoopActive = true
+
+			if not S.streamerModeCharacterConn then
+				S.streamerModeCharacterConn = player.CharacterAdded:Connect(function()
+					if S.streamerModeRunning then
+						task.wait(0.35)
+						H.applyStreamerModeVisuals()
+					end
+				end)
+			end
+
+			task.spawn(function()
+				while S.streamerModeRunning do
+					H.applyStreamerModeVisuals()
+					task.wait(0.35)
+				end
+				S.streamerModeLoopActive = false
+			end)
+		end
+
 		function H.getWorkspacePath(pathParts)
 			local current = workspace
 			for _, name in ipairs(pathParts) do
@@ -2976,11 +3393,43 @@
 
 			local balls = {}
 			for _, child in ipairs(folder:GetChildren()) do
-				if child:IsA("BasePart") then
+				if child:IsA("BasePart") or child:IsA("Model") then
 					table.insert(balls, child)
 				end
 			end
 			return balls
+		end
+
+		function H.getBeachBallParts(ball)
+			local parts = {}
+			if not ball then
+				return parts
+			end
+
+			if ball:IsA("BasePart") then
+				table.insert(parts, ball)
+			end
+
+			for _, desc in ipairs(ball:GetDescendants()) do
+				if desc:IsA("BasePart") then
+					table.insert(parts, desc)
+				end
+			end
+
+			return parts
+		end
+
+		function H.getBeachBallPrimaryPart(ball)
+			if not ball then
+				return nil
+			end
+			if ball:IsA("BasePart") then
+				return ball
+			end
+			if ball.PrimaryPart then
+				return ball.PrimaryPart
+			end
+			return ball:FindFirstChildWhichIsA("BasePart", true)
 		end
 
 		function H.ensureAutoGoalsBallCollisionSetup()
@@ -2994,9 +3443,11 @@
 
 			local ok = pcall(function()
 				local physics = game:GetService("PhysicsService")
-				physics:CollisionGroupSetCollidable(AUTO_GOALS_BALL_COLLISION_GROUP, "Players", false)
-				physics:CollisionGroupSetCollidable(AUTO_GOALS_BALL_COLLISION_GROUP, AUTO_GOALS_BALL_COLLISION_GROUP, false)
-				physics:CollisionGroupSetCollidable(AUTO_GOALS_BALL_COLLISION_GROUP, "Default", true)
+				for _, info in ipairs(physics:GetRegisteredCollisionGroups()) do
+					if info.name ~= AUTO_GOALS_BALL_COLLISION_GROUP then
+						physics:CollisionGroupSetCollidable(AUTO_GOALS_BALL_COLLISION_GROUP, info.name, false)
+					end
+				end
 			end)
 
 			if ok then
@@ -3015,14 +3466,62 @@
 				return
 			end
 
+			local primary = H.getBeachBallPrimaryPart(ball)
 			S.autoGoalsBallCollisionBackup[name] = {
 				instance = ball,
-				collisionGroup = ball.CollisionGroup,
-				canCollide = ball.CanCollide,
+				collisionGroup = primary and primary.CollisionGroup or "Default",
+				canCollide = primary and primary.CanCollide,
+				canTouch = primary and primary.CanTouch,
+				massless = primary and primary.Massless,
+				anchored = primary and primary.Anchored,
 			}
 		end
 
-		function H.applyBeachBallNoPlayerCollision(ball)
+		function H.applyBeachBallSoftNoCollision(ball)
+			if not ball or not ball.Parent then
+				return false
+			end
+
+			H.backupBeachBallCollision(ball)
+			for _, part in ipairs(H.getBeachBallParts(ball)) do
+				pcall(function()
+					part.CanCollide = false
+					part.Massless = true
+				end)
+			end
+			return true
+		end
+
+		function H.restoreSingleBeachBallCollision(ball)
+			if not ball then
+				return
+			end
+
+			local backup = S.autoGoalsBallCollisionBackup[ball.Name]
+			if not backup or backup.instance ~= ball then
+				return
+			end
+
+			for _, part in ipairs(H.getBeachBallParts(ball)) do
+				pcall(function()
+					part.CollisionGroup = backup.collisionGroup or "Default"
+					if backup.canCollide ~= nil then
+						part.CanCollide = backup.canCollide
+					end
+					if backup.canTouch ~= nil then
+						part.CanTouch = backup.canTouch
+					end
+					if backup.massless ~= nil then
+						part.Massless = backup.massless
+					end
+					if backup.anchored ~= nil then
+						part.Anchored = backup.anchored
+					end
+				end)
+			end
+		end
+
+		function H.enforceBeachBallPhantomPhysics(ball)
 			if not ball or not ball.Parent then
 				return false
 			end
@@ -3032,26 +3531,103 @@
 			end
 
 			H.backupBeachBallCollision(ball)
-			local ok = pcall(function()
-				ball.CollisionGroup = AUTO_GOALS_BALL_COLLISION_GROUP
+
+			local parts = H.getBeachBallParts(ball)
+			if #parts == 0 then
+				return false
+			end
+
+			for _, part in ipairs(parts) do
+				pcall(function()
+					part.Anchored = true
+					part.CanCollide = false
+					part.CanTouch = false
+					part.Massless = true
+					part.CollisionGroup = AUTO_GOALS_BALL_COLLISION_GROUP
+					part.AssemblyAngularVelocity = Vector3.zero
+					part.AssemblyLinearVelocity = Vector3.zero
+				end)
+			end
+
+			local primary = H.getBeachBallPrimaryPart(ball)
+			if primary then
+				pcall(function()
+					primary:SetNetworkOwner(player)
+				end)
+			end
+
+			return true
+		end
+
+		function H.releaseBeachBallForKick(ball)
+			local parts = H.getBeachBallParts(ball)
+			for _, part in ipairs(parts) do
+				pcall(function()
+					part.Anchored = false
+					part.CanCollide = false
+					part.CanTouch = false
+					part.Massless = true
+					part.CollisionGroup = AUTO_GOALS_BALL_COLLISION_GROUP
+				end)
+			end
+		end
+
+		function H.beginBeachBallPhantomGuard(ball)
+			H.endBeachBallPhantomGuard()
+			S.autoGoalsPhantomBall = ball
+			S.autoGoalsPhantomConn = RunService.Heartbeat:Connect(function()
+				local activeBall = S.autoGoalsPhantomBall
+				if not S.autoGoalsRunning or not activeBall or not activeBall.Parent then
+					return
+				end
+				H.enforceBeachBallPhantomPhysics(activeBall)
 			end)
-			return ok
+		end
+
+		function H.endBeachBallPhantomGuard()
+			if S.autoGoalsPhantomConn then
+				S.autoGoalsPhantomConn:Disconnect()
+				S.autoGoalsPhantomConn = nil
+			end
+			S.autoGoalsPhantomBall = nil
+		end
+
+		function H.applyBeachBallNoPlayerCollision(ball)
+			return H.applyBeachBallSoftNoCollision(ball)
 		end
 
 		function H.applyAutoGoalsBallCollisions(balls)
 			for _, ball in ipairs(balls) do
-				H.applyBeachBallNoPlayerCollision(ball)
+				H.applyBeachBallSoftNoCollision(ball)
 			end
 		end
 
 		function H.restoreAutoGoalsBallCollisions()
+			H.endBeachBallPhantomGuard()
 			for _, backup in pairs(S.autoGoalsBallCollisionBackup) do
 				local ball = backup.instance
 				if ball and ball.Parent then
-					pcall(function()
-						ball.CollisionGroup = backup.collisionGroup or "Default"
-						ball.CanCollide = backup.canCollide ~= false
-					end)
+					local parts = H.getBeachBallParts(ball)
+					if #parts == 0 and ball:IsA("BasePart") then
+						parts = { ball }
+					end
+					for _, part in ipairs(parts) do
+						pcall(function()
+							part.CollisionGroup = backup.collisionGroup or "Default"
+							if backup.canCollide ~= nil then
+								part.CanCollide = backup.canCollide
+							end
+							if backup.canTouch ~= nil then
+								part.CanTouch = backup.canTouch
+							end
+							if backup.massless ~= nil then
+								part.Massless = backup.massless
+							end
+							if backup.anchored ~= nil then
+								part.Anchored = backup.anchored
+							end
+						end)
+					end
 				end
 			end
 			S.autoGoalsBallCollisionBackup = {}
@@ -3110,10 +3686,11 @@
 				return false
 			end
 
+			local primary = H.getBeachBallPrimaryPart(ball) or ball
 			local scoreRadius = radius or AUTO_GOALS_SCORE_RADIUS
-			local dist = H.horizontalDistance(ball.Position, goalPart.Position)
+			local dist = H.horizontalDistance(primary.Position, goalPart.Position)
 			if dist <= scoreRadius then
-				local yDiff = math.abs(ball.Position.Y - goalPart.Position.Y)
+				local yDiff = math.abs(primary.Position.Y - goalPart.Position.Y)
 				return yDiff <= 14
 			end
 			return false
@@ -3173,8 +3750,51 @@
 			return true
 		end
 
-		function H.getFixedBeachGoalForName(_ballName, goalsByName)
+		function H.getFixedBeachGoalForName(ballName, goalsByName, allBalls)
+			if ballName == "Ball2" then
+				return goalsByName.Goal_1
+			end
+			if ballName == "Ball1" then
+				return goalsByName.Goal_2
+			end
+			if ballName == "Ball" then
+				local goal1 = goalsByName.Goal_1
+				local goal2 = goalsByName.Goal_2
+				local goalList = {}
+				if goal1 then
+					table.insert(goalList, goal1)
+				end
+				if goal2 then
+					table.insert(goalList, goal2)
+				end
+				local goal1Busy = goal1 and H.isGoalOccupiedByBall(goal1, allBalls, goalList)
+				local goal2Busy = goal2 and H.isGoalOccupiedByBall(goal2, allBalls, goalList)
+				if goal1 and not goal1Busy then
+					return goal1
+				end
+				if goal2 and not goal2Busy then
+					return goal2
+				end
+				return goal1 or goal2
+			end
 			return goalsByName.Goal_1
+		end
+
+		function H.isGoalOccupiedByBall(goalPart, allBalls, goalList)
+			if not goalPart or not allBalls then
+				return false
+			end
+
+			goalList = goalList or { goalPart }
+			for _, ball in ipairs(allBalls) do
+				if H.isBallInSpecificGoal(ball, goalPart) then
+					return true
+				end
+				if S.autoGoalsScoredBalls[ball.Name] and H.isBallInGoal(ball, goalList) then
+					return true
+				end
+			end
+			return false
 		end
 
 		function H.shouldSkipBeachBallKick(ball, _goalsByName, _allBalls)
@@ -3213,20 +3833,25 @@
 				return false
 			end
 
+			local primary = H.getBeachBallPrimaryPart(ball)
 			local spawn = S.autoGoalsBallSpawns[ball.Name]
-			if spawn then
-				ball.CFrame = CFrame.new(spawn)
+			if spawn and primary then
+				primary.CFrame = CFrame.new(spawn)
 			end
 
-			ball.AssemblyAngularVelocity = Vector3.zero
-			ball.AssemblyLinearVelocity = Vector3.zero
+			for _, part in ipairs(H.getBeachBallParts(ball)) do
+				part.AssemblyAngularVelocity = Vector3.zero
+				part.AssemblyLinearVelocity = Vector3.zero
+			end
 			return true
 		end
 
 		function H.zeroBeachBallVelocity(ball)
-			if ball and ball.Parent then
-				ball.AssemblyAngularVelocity = Vector3.zero
-				ball.AssemblyLinearVelocity = Vector3.zero
+			for _, part in ipairs(H.getBeachBallParts(ball)) do
+				if part.Parent then
+					part.AssemblyAngularVelocity = Vector3.zero
+					part.AssemblyLinearVelocity = Vector3.zero
+				end
 			end
 		end
 
@@ -3291,15 +3916,41 @@
 		end
 
 		function H.applyBeachBallKickVelocity(ball, goalPart)
-			if not ball or not ball.Parent then
+			local primary = H.getBeachBallPrimaryPart(ball)
+			if not primary or not primary.Parent then
 				return false
 			end
 
 			local kickSpeed, kickLift = H.getSoccerKickValues()
 			local direction = H.getKickDirectionTowardGoal(ball, goalPart)
-			ball.AssemblyAngularVelocity = Vector3.zero
-			ball.AssemblyLinearVelocity = direction * kickSpeed + Vector3.new(0, kickLift, 0)
+			primary.AssemblyAngularVelocity = Vector3.zero
+			primary.AssemblyLinearVelocity = direction * kickSpeed + Vector3.new(0, kickLift, 0)
 			return true
+		end
+
+		function H.trySoccerSwingKick()
+			local sc = H.getSoccerController()
+			if not sc or not sc.OnLocalSwing then
+				return false
+			end
+
+			local pc = H.getPlayerController()
+			local useSilentTrain = H.shouldClickerUseSilentTrain()
+			local swung = false
+
+			pcall(function()
+				if useSilentTrain then
+					H.ensureWeaponEquipped(pc)
+				end
+				sc:OnLocalSwing()
+				swung = true
+			end)
+
+			if useSilentTrain then
+				H.ensureWeaponUnequipped(pc)
+			end
+
+			return swung
 		end
 
 		function H.kickBeachBallAfterTouch(ball, goalPart)
@@ -3307,10 +3958,22 @@
 				return false
 			end
 
-			H.fireTouchPair(H.getCharacterTouchPart(), ball)
+			local primary = H.getBeachBallPrimaryPart(ball)
+			if not primary then
+				return false
+			end
+
+			H.restoreSingleBeachBallCollision(ball)
+			H.zeroBeachBallVelocity(ball)
+			H.fireTouchPair(H.getCharacterTouchPart(), primary)
+
+			H.trySoccerSwingKick()
 			H.applyBeachBallKickVelocity(ball, goalPart)
 
 			local ballId = ball:GetAttribute("SoccerBallId")
+			if not ballId and primary ~= ball then
+				ballId = primary:GetAttribute("SoccerBallId")
+			end
 			return H.fireSoccerKick(ballId)
 		end
 
@@ -3330,8 +3993,8 @@
 			return S.autoGoalsScoredBalls[ballName] == true
 		end
 
-		function H.pickGoalForBeachBall(ball, goalsByName, _allBalls)
-			return ball and H.getFixedBeachGoalForName(ball.Name, goalsByName) or nil
+		function H.pickGoalForBeachBall(ball, goalsByName, allBalls)
+			return ball and H.getFixedBeachGoalForName(ball.Name, goalsByName, allBalls) or nil
 		end
 
 		function H.orderBeachBallsFixed(balls)
@@ -3472,32 +4135,237 @@
 			return ok
 		end
 
-		function H.smoothMoveBallTo(ball, targetPos, steps, stepWait)
-			if not ball or not ball.Parent then
+		function H.getUndergroundPosition(surfacePos, depth)
+			depth = depth or AUTO_GOALS_UNDERGROUND_DEPTH
+			return Vector3.new(surfacePos.X, surfacePos.Y - depth, surfacePos.Z)
+		end
+
+		function H.setBeachBallPosition(ball, targetPos, useSoftCollision)
+			if not ball or not targetPos then
 				return false
 			end
 
-			local start = ball.Position
-			steps = steps or 10
-			stepWait = stepWait or 0.05
+			if useSoftCollision then
+				H.applyBeachBallSoftNoCollision(ball)
+			end
 
-			ball.AssemblyAngularVelocity = Vector3.zero
-			ball.AssemblyLinearVelocity = Vector3.zero
+			local primary = H.getBeachBallPrimaryPart(ball)
+			if not primary then
+				return false
+			end
+
+			primary.CFrame = CFrame.new(targetPos)
+			H.zeroBeachBallVelocity(ball)
+			return true
+		end
+
+		function H.slideBeachBallTo(ball, targetPos, steps, stepWait, useSoftCollision)
+			if not ball or not ball.Parent or not targetPos then
+				return false
+			end
+
+			if not S.autoGoalsRunning then
+				return false
+			end
+
+			local primary = H.getBeachBallPrimaryPart(ball)
+			if not primary then
+				return false
+			end
+
+			if useSoftCollision then
+				H.applyBeachBallSoftNoCollision(ball)
+			end
+
+			local start = primary.Position
+			steps = math.max(1, steps or 10)
+			stepWait = stepWait or 0.03
 
 			for i = 1, steps do
 				if not S.autoGoalsRunning then
 					return false
 				end
 
+				if useSoftCollision then
+					H.applyBeachBallSoftNoCollision(ball)
+				end
+
 				local alpha = i / steps
 				local pos = start:Lerp(targetPos, alpha)
-				ball.CFrame = CFrame.new(pos)
+				primary.CFrame = CFrame.new(pos)
+				H.zeroBeachBallVelocity(ball)
 				task.wait(stepWait)
 			end
 
-			ball.AssemblyAngularVelocity = Vector3.zero
-			ball.AssemblyLinearVelocity = Vector3.zero
 			return true
+		end
+
+		function H.slideBeachBallUpFromUnderground(ball, surfacePos, riseSteps, stepWait, useSoftCollision)
+			if not surfacePos then
+				return false
+			end
+
+			local underPos = H.getUndergroundPosition(surfacePos)
+			if not H.setBeachBallPosition(ball, underPos, useSoftCollision) then
+				return false
+			end
+
+			return H.slideBeachBallTo(
+				ball,
+				surfacePos,
+				riseSteps or AUTO_GOALS_UNDERGROUND_RISE_STEPS,
+				stepWait or AUTO_GOALS_UNDERGROUND_STEP_WAIT,
+				useSoftCollision
+			)
+		end
+
+		function H.slideBeachBallUndergroundToGoal(ball, goalPos)
+			local primary = H.getBeachBallPrimaryPart(ball)
+			if not primary or not goalPos then
+				return false
+			end
+
+			local buriedY = goalPos.Y - AUTO_GOALS_UNDERGROUND_DEPTH
+			local current = primary.Position
+			local underCurrent = Vector3.new(current.X, buriedY, current.Z)
+			local underGoal = Vector3.new(goalPos.X, buriedY, goalPos.Z)
+
+			if not H.slideBeachBallTo(
+				ball,
+				underCurrent,
+				AUTO_GOALS_UNDERGROUND_DROP_STEPS,
+				AUTO_GOALS_UNDERGROUND_STEP_WAIT,
+				false
+			) then
+				return false
+			end
+
+			if not H.slideBeachBallTo(
+				ball,
+				underGoal,
+				AUTO_GOALS_UNDERGROUND_TRAVEL_STEPS,
+				AUTO_GOALS_UNDERGROUND_STEP_WAIT,
+				false
+			) then
+				return false
+			end
+
+			return H.slideBeachBallTo(
+				ball,
+				goalPos,
+				AUTO_GOALS_UNDERGROUND_RISE_STEPS,
+				AUTO_GOALS_UNDERGROUND_STEP_WAIT,
+				false
+			)
+		end
+
+		function H.teleportBeachBallTo(ball, targetPos, useSoftCollision)
+			if not ball or not ball.Parent or not targetPos then
+				return false
+			end
+
+			if not S.autoGoalsRunning then
+				return false
+			end
+
+			return H.setBeachBallPosition(ball, targetPos, useSoftCollision)
+		end
+
+		function H.smoothMoveBallTo(ball, targetPos, steps, stepWait)
+			return H.slideBeachBallTo(ball, targetPos, steps, stepWait, true)
+		end
+
+		function H.getBeachBallInsidePlayerTarget(ball, embedAlpha)
+			local playerRoot = H.getCharacterRoot()
+			local primary = H.getBeachBallPrimaryPart(ball)
+			if not playerRoot or not primary then
+				return nil
+			end
+
+			embedAlpha = math.clamp(embedAlpha or 1, 0, 1)
+
+			local look = playerRoot.CFrame.LookVector
+			local flatLook = Vector3.new(look.X, 0, look.Z)
+			if flatLook.Magnitude < 0.05 then
+				flatLook = Vector3.new(0, 0, -1)
+			else
+				flatLook = flatLook.Unit
+			end
+
+			local radius = math.max(primary.Size.X, primary.Size.Y, primary.Size.Z) * 0.5
+			local edgePos = playerRoot.Position + flatLook * (radius * 0.15)
+			local insidePos = playerRoot.Position
+			return edgePos:Lerp(insidePos, embedAlpha)
+		end
+
+		function H.moveBeachBallToPlayerForTouch(ball)
+			local playerRoot = H.getCharacterRoot()
+			if not playerRoot or not ball then
+				return false
+			end
+
+			H.applyBeachBallSoftNoCollision(ball)
+			H.zeroBeachBallVelocity(ball)
+
+			local onPos = H.getBeachBallInsidePlayerTarget(ball, AUTO_GOALS_BALL_ON_PLAYER_EMBED)
+			if not onPos then
+				return false
+			end
+
+			if not H.slideBeachBallUpFromUnderground(
+				ball,
+				onPos,
+				AUTO_GOALS_BALL_TO_PLAYER_STEPS,
+				AUTO_GOALS_BALL_TO_PLAYER_STEP_WAIT,
+				true
+			) then
+				return false
+			end
+
+			H.fireTouchPair(H.getCharacterTouchPart(), H.getBeachBallPrimaryPart(ball) or ball)
+
+			local holdEnd = os.clock() + AUTO_GOALS_BALL_INSIDE_HOLD
+			while S.autoGoalsRunning and os.clock() < holdEnd do
+				local heldPos = H.getBeachBallInsidePlayerTarget(ball, AUTO_GOALS_BALL_ON_PLAYER_EMBED)
+				if heldPos then
+					H.slideBeachBallTo(ball, heldPos, 2, 0.02, true)
+				end
+				task.wait(0.05)
+			end
+
+			if not S.autoGoalsRunning then
+				return false
+			end
+
+			local deepPos = H.getBeachBallInsidePlayerTarget(ball, 1)
+			if not deepPos then
+				return false
+			end
+
+			if not H.slideBeachBallTo(
+				ball,
+				deepPos,
+				AUTO_GOALS_BALL_INSIDE_SMOOTH_STEPS,
+				AUTO_GOALS_BALL_INSIDE_SMOOTH_STEP_WAIT,
+				true
+			) then
+				return false
+			end
+
+			H.fireTouchPair(H.getCharacterTouchPart(), H.getBeachBallPrimaryPart(ball) or ball)
+			task.wait(AUTO_GOALS_TOUCH_SETTLE)
+			return true
+		end
+
+		function H.touchBeachBallAtPlayer(ball)
+			return H.moveBeachBallToPlayerForTouch(ball)
+		end
+
+		function H.touchBeachBallForAutoGoal(ball)
+			if H.shouldAutoGoalsBringBallToPlayer() then
+				return H.touchBeachBallAtPlayer(ball)
+			end
+			return H.touchBeachBallAtMidfield(ball)
 		end
 
 		function H.touchBeachBallAtMidfield(ball)
@@ -3514,25 +4382,7 @@
 			playerRoot.CFrame = middleCFrame
 			task.wait(AUTO_GOALS_TOUCH_SETTLE)
 
-			local look = playerRoot.CFrame.LookVector
-			local flatLook = Vector3.new(look.X, 0, look.Z)
-			if flatLook.Magnitude < 0.05 then
-				flatLook = Vector3.new(0, 0, -1)
-			else
-				flatLook = flatLook.Unit
-			end
-
-			local radius = math.max(ball.Size.X, ball.Size.Y, ball.Size.Z) * 0.5
-			local touchPos = playerRoot.Position + flatLook * (radius + AUTO_GOALS_TOUCH_FORWARD_OFFSET)
-			touchPos = Vector3.new(touchPos.X, ball.Position.Y, touchPos.Z)
-
-			if not H.smoothMoveBallTo(ball, touchPos, AUTO_GOALS_BALL_TO_PLAYER_STEPS, AUTO_GOALS_BALL_TO_PLAYER_STEP_WAIT) then
-				return false
-			end
-
-			H.fireTouchPair(H.getCharacterTouchPart(), ball)
-			task.wait(AUTO_GOALS_TOUCH_SETTLE)
-			return true
+			return H.moveBeachBallToPlayerForTouch(ball)
 		end
 
 		function H.getBeachGoalScorePart(goalPart)
@@ -3549,20 +4399,196 @@
 				return false
 			end
 
+			H.restoreSingleBeachBallCollision(ball)
+
 			local aimPos = H.getBeachGoalAimPositionForBall(ball, goalPart)
 			if not aimPos then
 				return false
 			end
 
 			local scorePart = H.getBeachGoalScorePart(goalPart)
-			local goalPos = Vector3.new(aimPos.X, ball.Position.Y, aimPos.Z)
+			local primary = H.getBeachBallPrimaryPart(ball)
+			local goalPos = Vector3.new(aimPos.X, aimPos.Y, aimPos.Z)
 
-			if not H.smoothMoveBallTo(ball, goalPos, AUTO_GOALS_GOAL_SLIDE_STEPS, AUTO_GOALS_GOAL_SLIDE_STEP_WAIT) then
+			if not H.slideBeachBallUndergroundToGoal(ball, goalPos) then
 				return false
 			end
 
-			H.fireTouchPair(ball, scorePart)
+			task.wait(AUTO_GOALS_TOUCH_SETTLE)
+			H.fireTouchPair(primary or ball, scorePart)
 			return true
+		end
+
+		function H.ensureFishingPhaseListener()
+			if S.autoFishPhaseConn then
+				return
+			end
+
+			local zap = H.getZapClient()
+			if not zap or not zap.FishingPhase or not zap.FishingPhase.On then
+				return
+			end
+
+			S.autoFishPhaseConn = zap.FishingPhase.On(function(data)
+				S.autoFishPhase = data and data.phase or FISHING_PHASE_IDLE
+			end)
+		end
+
+		function H.teardownFishingPhaseListener()
+			if S.autoFishPhaseConn then
+				pcall(function()
+					S.autoFishPhaseConn:Disconnect()
+				end)
+				S.autoFishPhaseConn = nil
+			end
+			S.autoFishPhase = FISHING_PHASE_IDLE
+		end
+
+		function H.getFishAreaPart()
+			local fishArea = H.getWorkspacePath(FISH_AREA_PATH)
+			if fishArea and fishArea:IsA("BasePart") then
+				return fishArea
+			end
+			return nil
+		end
+
+		function H.getFishAreaFootPosition()
+			local root = H.getCharacterRoot()
+			if not root then
+				return nil
+			end
+
+			local character = player.Character
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			return root.Position - Vector3.new(0, root.Size.Y * 0.5 + (humanoid and humanoid.HipHeight or 0), 0)
+		end
+
+		function H.isPointOnFishAreaPart(footPos)
+			local fishArea = H.getFishAreaPart()
+			if not fishArea or not footPos then
+				return false
+			end
+
+			local localPos = fishArea.CFrame:PointToObjectSpace(footPos)
+			local half = fishArea.Size * 0.5
+			return math.abs(localPos.X) <= half.X
+				and math.abs(localPos.Z) <= half.Z
+				and math.abs(localPos.Y) <= half.Y + FISHING_ZONE_Y_TOLERANCE
+		end
+
+		function H.getFishAreaStandCFrame()
+			local fishArea = H.getFishAreaPart()
+			if not fishArea then
+				return nil
+			end
+
+			local root = H.getCharacterRoot()
+			local rootHalf = root and root.Size.Y * 0.5 or 1
+			local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+			local hip = humanoid and humanoid.HipHeight or 2
+			local yOffset = fishArea.Size.Y * 0.5 + rootHalf + hip
+			return fishArea.CFrame * CFrame.new(0, yOffset, 0)
+		end
+
+		function H.isInFishingZone()
+			local footPos = H.getFishAreaFootPosition()
+			if not footPos then
+				return false
+			end
+
+			if H.isPointOnFishAreaPart(footPos) then
+				return true
+			end
+
+			for _, zonePart in ipairs(CollectionService:GetTagged(FISHING_ZONE_TAG)) do
+				if zonePart:IsA("BasePart") then
+					local localPos = zonePart.CFrame:PointToObjectSpace(footPos)
+					local half = zonePart.Size * 0.5
+					if math.abs(localPos.X) <= half.X
+						and math.abs(localPos.Z) <= half.Z
+						and math.abs(localPos.Y) <= half.Y + FISHING_ZONE_Y_TOLERANCE then
+						return true
+					end
+				end
+			end
+
+			return false
+		end
+
+		function H.snapToFishingStand()
+			local root = H.getCharacterRoot()
+			if not root then
+				return false
+			end
+
+			local standCFrame = H.getFishAreaStandCFrame()
+			if not standCFrame then
+				H.setStatus("FishArea not found")
+				return false
+			end
+
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.AssemblyAngularVelocity = Vector3.zero
+			root.CFrame = standCFrame
+			return true
+		end
+
+		function H.fireFishingStart()
+			local zap = H.getZapClient()
+			if not zap or not zap.FishingStart or not zap.FishingStart.Fire then
+				return false
+			end
+
+			local ok = pcall(function()
+				zap.FishingStart.Fire()
+			end)
+			return ok
+		end
+
+		function H.runAutoFishCycle()
+			H.ensureFishingPhaseListener()
+
+			while S.autoFishRunning do
+				local root = H.getCharacterRoot()
+				if not root then
+					task.wait(AUTO_FISH_POLL)
+				else
+					if not H.isInFishingZone() then
+						H.snapToFishingStand()
+						task.wait(0.3)
+					end
+
+					if S.autoFishPhase == FISHING_PHASE_IDLE then
+						H.fireFishingStart()
+						local deadline = os.clock() + AUTO_FISH_CAST_TIMEOUT
+						while S.autoFishRunning and S.autoFishPhase ~= FISHING_PHASE_IDLE and os.clock() < deadline do
+							task.wait(0.15)
+						end
+					end
+
+					task.wait(AUTO_FISH_POLL)
+				end
+			end
+		end
+
+		function H.stopAutoFishLoop()
+			S.autoFishRunning = false
+			H.teardownFishingPhaseListener()
+			if not S.autoGoalsRunning then
+				H.applySilentTrainMode(false)
+			end
+		end
+
+		function H.startAutoFishLoop()
+			if S.autoFishLoopActive then
+				return
+			end
+			S.autoFishLoopActive = true
+
+			task.spawn(function()
+				H.runAutoFishCycle()
+				S.autoFishLoopActive = false
+			end)
 		end
 
 		function H.tryKickBeachBall(ball, goalPart)
@@ -3585,8 +4611,10 @@
 
 			local confirmed = false
 
-			if H.touchBeachBallAtMidfield(ball) then
+			if H.touchBeachBallForAutoGoal(ball) then
 				task.wait(AUTO_GOALS_AFTER_TOUCH_DELAY)
+				H.restoreSingleBeachBallCollision(ball)
+				H.zeroBeachBallVelocity(ball)
 				if H.kickBeachBallAfterTouch(ball, goalPart) then
 					task.wait(AUTO_GOALS_POST_KICK_SETTLE)
 					if H.slideBeachBallIntoGoal(ball, goalPart) then
@@ -3595,6 +4623,8 @@
 				end
 			end
 
+			H.restoreSingleBeachBallCollision(ball)
+
 			if confirmed then
 				H.setStatus(ball.Name .. " goal confirmed")
 				return true
@@ -3602,16 +4632,19 @@
 
 			H.prepareBeachBallForAutoGoal(ball)
 			H.zeroBeachBallVelocity(ball)
-			H.setStatus(ball.Name .. " timed out â€” retrying")
+			H.setStatus(ball.Name .. " timed out - retrying")
 			return false
 		end
 
 		function H.runAutoGoalsCycle()
 			H.ensureAutoGoalsGoalListener()
-			H.applyClickerModeForAutoGoals(true)
+			H.applySilentTrainMode(true)
+
+			if H.shouldAutoGoalsBringBallToPlayer() then
+				H.setStatus("Auto goals: ball comes to you (fishing stand)")
+			end
 
 			while S.autoGoalsRunning do
-				H.ensureWeaponUnequipped(H.getPlayerController())
 				H.ensureAutoGoalsGoalListener()
 				local goalsByName = H.collectBeachGoalsByName()
 				local goals = {}
@@ -3619,7 +4652,6 @@
 					table.insert(goals, goalPart)
 				end
 				local balls = H.getBeachBalls()
-				H.applyAutoGoalsBallCollisions(balls)
 				if #goals == 0 then
 					H.setStatus("Beach goals not found")
 					task.wait(1)
@@ -3648,10 +4680,11 @@
 							break
 						end
 						if not H.shouldSkipBeachBallKick(ball, goalsByName, balls) then
-							local goalPart = goalsByName.Goal_1
+							local goalPart = H.pickGoalForBeachBall(ball, goalsByName, balls)
 							if goalPart then
 								acted = true
-								H.setStatus("Touch + kick " .. ball.Name .. " then slide to Goal_1")
+								local goalName = goalPart.Parent and goalPart.Parent.Name or "goal"
+								H.setStatus("Underground slide " .. ball.Name .. " to you, kick, rise into " .. goalName)
 								H.tryKickBeachBall(ball, goalPart)
 							end
 						end
@@ -3672,7 +4705,9 @@
 			S.autoGoalsLastKickBallName = nil
 			H.teardownAutoGoalsGoalListener()
 			H.teardownAutoGoalsBallCollision()
-			H.applyClickerModeForAutoGoals(false)
+			if not S.autoFishRunning then
+				H.applySilentTrainMode(false)
+			end
 		end
 
 		function H.startAutoGoalsLoop()
@@ -4902,9 +5937,37 @@
 		function H.buildBeachGoalsEventSection(tab, sectionTitle)
 			local section = H.createStaticBoxSection(tab, sectionTitle, "solar:football-bold")
 
+			UI.autoFishToggleElement = section:Toggle({
+				Title = "Auto Fish",
+				Desc = "AFK fish at the beach stand (Zap FishingStart)",
+				Value = false,
+				Callback = function(on)
+					if S.suppressAutoFishSync then
+						return
+					end
+					if H.setAutoFish then
+						H.setAutoFish(on == true, true)
+					end
+				end,
+			})
+
+			UI.autoUpgradeRodToggleElement = section:Toggle({
+				Title = "Auto Upgrade Rod",
+				Desc = "Buys the next rod you can afford (shells) and equips your best rod",
+				Value = false,
+				Callback = function(on)
+					if S.suppressAutoUpgradeRodSync then
+						return
+					end
+					if H.setAutoUpgradeRod then
+						H.setAutoUpgradeRod(on == true, true)
+					end
+				end,
+			})
+
 			UI.autoGoalsToggleElement = section:Toggle({
 				Title = "Auto Goals",
-				Desc = "Ball2, Ball1, Ball -> Goal_1: touch, kick, slide; no ball collision",
+				Desc = "Beach soccer goals; with Auto Fish on, ball comes to you on the fishing stand",
 				Value = false,
 				Callback = function(on)
 					if S.suppressAutoGoalsSync then
@@ -4989,26 +6052,40 @@
 		end
 
 		function H.shouldClickerUseSilentTrain()
-			return S.autoGoalsRunning == true
+			return S.autoGoalsRunning == true or S.autoFishRunning == true
 		end
 
 		function H.backgroundTrainSilent()
 			return H.fireTrainRemotes()
 		end
 
-		function H.applyClickerModeForAutoGoals(autoGoalsOn)
+		function H.applySilentTrainMode(enabled)
 			local pc = H.getPlayerController()
-			if autoGoalsOn then
-				S.clickerHadAeroAuto = pc and pc.DoAutoClick == true
+			if enabled then
+				if not S.silentTrainModeActive then
+					S.clickerHadAeroAuto = pc and pc.DoAutoClick == true
+					S.silentTrainModeActive = true
+				end
 				H.tryAeroAutoSwing(pc, false)
 				H.ensureWeaponUnequipped(pc)
 				return
 			end
 
-			if S.clickerHadAeroAuto then
+			S.silentTrainModeActive = false
+			if S.clickerHadAeroAuto and not H.shouldClickerUseSilentTrain() then
 				H.tryAeroAutoSwing(pc, true)
+				S.clickerHadAeroAuto = false
+			elseif not H.shouldClickerUseSilentTrain() then
+				S.clickerHadAeroAuto = false
 			end
-			S.clickerHadAeroAuto = false
+		end
+
+		function H.applyClickerModeForAutoGoals(autoGoalsOn)
+			if autoGoalsOn or H.shouldClickerUseSilentTrain() then
+				H.applySilentTrainMode(true)
+			else
+				H.applySilentTrainMode(false)
+			end
 		end
 
 		function H.tryAeroAutoSwing(pc, enable)
@@ -5079,9 +6156,9 @@
 
 				if S.clickerRunning and pc then
 					if H.shouldClickerUseSilentTrain() then
-						H.applyClickerModeForAutoGoals(true)
+						H.applySilentTrainMode(true)
 						aeroAutoActive = false
-						print("[ExonHub] Auto click: silent train (auto goals active)")
+						print("[ExonHub] Auto click: silent train (fish/goals active)")
 					else
 						H.tryAeroAutoSwing(pc, true)
 						task.wait(0.35)
@@ -5098,7 +6175,8 @@
 
 				while S.clickerRunning do
 					if H.shouldClickerUseSilentTrain() then
-						H.ensureWeaponUnequipped(H.getPlayerController())
+						H.applySilentTrainMode(true)
+						aeroAutoActive = false
 						H.backgroundTrainSilent()
 						task.wait(TRAIN_INTERVAL)
 					elseif not aeroAutoActive then
@@ -7190,6 +8268,20 @@
 				end,
 			})
 
+			UI.streamerModeToggleElement = MiscSection:Toggle({
+				Title = "Streamer Mode",
+				Desc = "Hides your name as Exon Hub and swaps portrait to Exon Hub icon",
+				Value = false,
+				Callback = function(on)
+					if S.suppressStreamerModeSync then
+						return
+					end
+					if H.setStreamerMode then
+						H.setStreamerMode(on == true, true)
+					end
+				end,
+			})
+
 			H.finalizeStaticSection(MiscSection)
 			H.buildGoldenEggTeleportSection(MiscTab)
 			H.buildMiscTeleportSection(MiscTab)
@@ -7291,19 +8383,6 @@
 		function H.clearNodeFailure(node)
 			S.failCount[node] = nil
 			S.skipUntil[node] = nil
-		end
-
-		function H.isMitigationActive()
-			return os.clock() < S.mitigationUntil
-		end
-
-		function H.triggerMitigationWait()
-			S.mitigationUntil = os.clock() + AC_MITIGATION_TIME
-			S.consecutiveGlobalFails = 0
-			S.roamIndex = math.random(1, math.max(1, 10))
-			H.resetOrbFarmMovement()
-			H.setStatus("Stuck â€” roaming + walk...")
-			print("[ExonHub] Roam+walk for", AC_MITIGATION_TIME, "s")
 		end
 
 		function H.getNodeLabel(node, typeValue)
@@ -7429,26 +8508,6 @@
 			return H.isNodeCollected(node)
 		end
 
-		local APPROACH_DIRS = {
-			Vector3.new(1, 0, 0),
-			Vector3.new(-1, 0, 0),
-			Vector3.new(0, 0, 1),
-			Vector3.new(0, 0, -1),
-		}
-
-		function H.getApproachPosition(node, dirIndex)
-			local center = node.Position
-			local dir = APPROACH_DIRS[((dirIndex or 1) - 1) % #APPROACH_DIRS + 1]
-			return center + dir * APPROACH_DISTANCE + Vector3.new(0, 2, 0)
-		end
-
-		function H.getFlatDistanceToNode(node)
-			local hrp = H.getCharacterRoot()
-			if not hrp then return math.huge end
-			local d = hrp.Position - node.Position
-			return Vector3.new(d.X, 0, d.Z).Magnitude
-		end
-
 		function H.resetOrbFarmMovement()
 			S.orbFirstSnapDone = false
 			H.cancelOrbFollowTween()
@@ -7483,24 +8542,26 @@
 			end
 
 			local dist = (hrp.Position - goal.Position).Magnitude
-			if dist < 0.5 then
-				hrp.CFrame = goal
+			if dist < 0.15 then
 				return true
 			end
 
 			H.cancelOrbFollowTween()
 
-			local duration = dist / ORB_FOLLOW_SPEED
+			local duration = math.max(dist / ORB_FOLLOW_SPEED, 0.06)
 			local finished = false
-			S.orbFollowTween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
+			local tween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
 				CFrame = goal,
 			})
-			S.orbFollowTween.Completed:Connect(function()
-				finished = true
+			S.orbFollowTween = tween
+			tween.Completed:Connect(function(playbackState)
+				if playbackState == Enum.PlaybackState.Completed then
+					finished = true
+				end
 			end)
-			S.orbFollowTween:Play()
+			tween:Play()
 
-			local deadline = os.clock() + duration + 0.2
+			local deadline = os.clock() + duration + 0.35
 			while not finished and os.clock() < deadline do
 				if not S.running then
 					H.cancelOrbFollowTween()
@@ -7509,7 +8570,6 @@
 				local hum = H.getHumanoid()
 				if not hum or hum.Health <= 0 then
 					H.resetOrbFarmMovement()
-					H.cancelOrbFollowTween()
 					return false
 				end
 				if H.isNodeCollected(node) then
@@ -7520,13 +8580,9 @@
 			end
 
 			H.cancelOrbFollowTween()
-			if hrp.Parent then
-				hrp.CFrame = goal
-			end
-			return true
+			return finished
 		end
 
-		-- Normal mode: snap first orb, then tween to each next closest
 		function H.tpCollectAtNode(node)
 			if not S.running or H.isNodeCollected(node) then return H.isNodeCollected(node) end
 			if not H.getCharacterRoot() then return false end
@@ -7541,83 +8597,16 @@
 
 			task.wait(0.05)
 			if not S.running then return false end
-			return H.waitForNodeCollected(node, COLLECT_WAIT)
-		end
 
-		-- Roam/stuck only: TP 4 studs out, short walk in
-		function H.shortWalkIntoNode(node, dirIndex)
-			if H.isNodeCollected(node) then return true end
-
-			local hrp = H.getCharacterRoot()
-			local humanoid = H.getHumanoid()
-			if not hrp or not humanoid or humanoid.Health <= 0 then return false end
-
-			local target = node.Position + Vector3.new(0, 1, 0)
-			humanoid:MoveTo(target)
-
-			local start = os.clock()
-			local holdStart = nil
-
-			while os.clock() - start < WALK_TIMEOUT do
-				if not S.running then return false end
-				if H.isNodeCollected(node) then return true end
-
-				local dist = H.getFlatDistanceToNode(node)
-				if dist <= COLLECT_RADIUS then
-					holdStart = holdStart or os.clock()
-					humanoid:MoveTo(target)
-					if os.clock() - holdStart >= COLLECT_HOLD then
-						return H.waitForNodeCollected(node, COLLECT_WAIT)
-					end
-				else
-					holdStart = nil
-					humanoid:MoveTo(target)
-				end
-				task.wait(COLLECT_POLL)
+			local collected = H.waitForNodeCollected(node, COLLECT_WAIT)
+			if collected and S.running then
+				task.wait((ORB_COLLECT_PAUSE_MIN + ORB_COLLECT_PAUSE_MAX) * 0.5)
 			end
-
-			return H.isNodeCollected(node)
+			return collected
 		end
 
 		function H.tryCollectAtNode(node)
 			return H.tpCollectAtNode(node)
-		end
-
-		-- When stuck: hop to a different node, walk in (looks natural)
-		function H.farmRoamOnce()
-			local nodes = H.getAllActiveNodes()
-			if #nodes == 0 then
-				H.setStatus("Roaming â€” no nodes")
-				return 0
-			end
-
-			if S.roamIndex > #nodes then S.roamIndex = 1 end
-			local node = nodes[S.roamIndex]
-			local dirIndex = S.roamIndex
-			S.roamIndex = S.roamIndex + 1
-
-			local label = H.getNodeLabel(node, H.getNodeTypeValue(node))
-			local left = math.max(0, math.ceil(S.mitigationUntil - os.clock()))
-			H.setStatus(string.format("Roam %ds walk â†’ %s", left, label))
-
-			if not H.getCharacterRoot() then return 0 end
-
-			-- TP 4 studs out, then short walk in
-			local hrp = H.getCharacterRoot()
-			hrp.CFrame = CFrame.new(H.getApproachPosition(node, dirIndex))
-			task.wait(0.1)
-			if not S.running then return 0 end
-
-			if H.shortWalkIntoNode(node, dirIndex) then
-				S.consecutiveGlobalFails = 0
-				H.setStatus("Claimed: " .. label)
-				if not H.isMitigationActive() then
-					S.mitigationUntil = 0
-				end
-				return 1
-			end
-
-			return 0
 		end
 
 		function H.processNode(node, verbose)
@@ -7638,15 +8627,10 @@
 			local claimed = H.tryCollectAtNode(node)
 			if claimed then
 				H.clearNodeFailure(node)
-				S.consecutiveGlobalFails = 0
 				H.setStatus("Claimed: " .. label)
 			else
-				S.consecutiveGlobalFails = S.consecutiveGlobalFails + 1
 				H.markNodeFailed(node, "no collect")
 				H.setStatus("Skipped: " .. label)
-				if S.consecutiveGlobalFails >= 5 then
-					H.triggerMitigationWait()
-				end
 			end
 
 			S.isProcessing = false
@@ -7681,27 +8665,13 @@
 					continue
 				end
 
-				local claimed = 0
-
-				if H.isMitigationActive() then
-					claimed = H.farmRoamOnce()
-					if not S.running then break end
-					task.wait(claimed > 0 and 0.2 or 0.4)
-				else
-					claimed = H.farmOnce()
-					if not S.running then break end
-					if claimed == 0 then
-						H.setStatus("Waiting for respawn...")
-						task.wait(0.5)
-					else
-						task.wait(0.1)
-					end
+				local claimed = H.farmOnce()
+				if not S.running then
+					break
 				end
-
-				-- mitigation timer expired â†’ back to normal nearest-node farming
-				if not H.isMitigationActive() and S.mitigationUntil > 0 then
-					S.mitigationUntil = 0
-					H.setStatus("Back to normal farm")
+				if claimed == 0 then
+					H.setStatus("Waiting for nodes...")
+					task.wait(0.5)
 				end
 			end
 			S.farmLoopActive = false
@@ -7712,17 +8682,12 @@
 			if S.running == state then return end
 			S.running = state
 			if S.running then
-				S.mitigationUntil = 0
-				S.consecutiveGlobalFails = 0
-				S.roamIndex = 1
 				H.resetOrbFarmMovement()
 				S.farmLoopActive = false
 				print("[ExonHub] Farm ON")
 				H.setStatus("Running...")
 				task.spawn(H.farmLoop)
 			else
-				S.mitigationUntil = 0
-				S.consecutiveGlobalFails = 0
 				S.isProcessing = false
 				H.resetOrbFarmMovement()
 				print("[ExonHub] Farm OFF")
@@ -7742,6 +8707,9 @@
 
 			if state then
 				S.clickerRunning = true
+				if H.shouldClickerUseSilentTrain() then
+					H.applySilentTrainMode(true)
+				end
 				print("[ExonHub] Auto click ON")
 				H.setStatus("Auto click ON")
 				H.clickerLoop()
@@ -7862,7 +8830,7 @@
 				S.autoGoalsBallSpawns = {}
 				S.autoGoalsLastKickBallName = nil
 				if S.clickerRunning then
-					H.applyClickerModeForAutoGoals(true)
+					H.applySilentTrainMode(true)
 				end
 				print("[ExonHub] Auto goals ON")
 				H.setStatus("Auto goals ON")
@@ -7879,6 +8847,56 @@
 		end
 
 		H.setAutoGoals = H.setAutoGoalsImpl
+
+		function H.setAutoFishImpl(state, fromToggle)
+			if S.autoFishRunning == state then
+				return
+			end
+
+			S.autoFishRunning = state
+			if state then
+				S.autoFishPhase = FISHING_PHASE_IDLE
+				if S.clickerRunning then
+					H.applySilentTrainMode(true)
+				end
+				print("[ExonHub] Auto fish ON")
+				H.setStatus("Auto fish ON")
+				H.startAutoFishLoop()
+			else
+				H.stopAutoFishLoop()
+				print("[ExonHub] Auto fish OFF")
+				H.setStatus("Auto fish OFF")
+			end
+
+			if not fromToggle then
+				H.syncAutoFishToggle(state)
+			end
+		end
+
+		H.setAutoFish = H.setAutoFishImpl
+
+		function H.setAutoUpgradeRodImpl(state, fromToggle)
+			if S.autoUpgradeRodRunning == state then
+				return
+			end
+
+			S.autoUpgradeRodRunning = state
+			if state then
+				print("[ExonHub] Auto upgrade rod ON")
+				H.setStatus("Auto upgrade rod ON")
+				H.startAutoUpgradeRodLoop()
+			else
+				H.stopAutoUpgradeRodLoop()
+				print("[ExonHub] Auto upgrade rod OFF")
+				H.setStatus("Auto upgrade rod OFF")
+			end
+
+			if not fromToggle then
+				H.syncAutoUpgradeRodToggle(state)
+			end
+		end
+
+		H.setAutoUpgradeRod = H.setAutoUpgradeRodImpl
 
 		function H.setAutoKillImpl(state, fromToggle)
 			if S.autoKillRunning == state then
@@ -7926,6 +8944,32 @@
 		end
 
 		H.setAntiAfk = H.setAntiAfkImpl
+
+		function H.setStreamerModeImpl(state, fromToggle)
+			if S.streamerModeRunning == state then
+				return
+			end
+
+			S.streamerModeRunning = state
+			if state then
+				H.captureStreamerModeBackup()
+				H.applyStreamerModeVisuals()
+				H.startStreamerModeLoop()
+				print("[ExonHub] Streamer Mode ON")
+				H.setStatus("Streamer Mode ON")
+			else
+				H.stopStreamerModeLoop()
+				H.restoreStreamerModeVisuals()
+				print("[ExonHub] Streamer Mode OFF")
+				H.setStatus("Streamer Mode OFF")
+			end
+
+			if not fromToggle then
+				H.syncStreamerModeToggle(state)
+			end
+		end
+
+		H.setStreamerMode = H.setStreamerModeImpl
 
 		function H.setAutoSellChestImpl(state, fromToggle)
 			if S.autoSellChestRunning == state then
