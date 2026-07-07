@@ -4,6 +4,7 @@
 
 		local Players = game:GetService("Players")
 		local VirtualUser = game:GetService("VirtualUser")
+		local VirtualInputManager = game:GetService("VirtualInputManager")
 		local TweenService = game:GetService("TweenService")
 		local RunService = game:GetService("RunService")
 		local CollectionService = game:GetService("CollectionService")
@@ -64,6 +65,7 @@
 		local EXONHUB_ICON_URL = "https://cdn.discordapp.com/attachments/1522686323234832526/1522695144611123250/bce603ec-f4f6-458d-ad80-226aee524ea5.png"
 		local EXONHUB_DISCORD_ICON_URL = EXONHUB_ICON_URL
 		local EXONHUB_USAGE_DIR = "ExonHub/usage"
+		local EXONHUB_SETTINGS_DIR = "ExonHub/settings"
 		local EXONHUB_MINIMIZED_PULSE = 0.05
 		local EXONHUB_MINIMIZED_SIZE = UDim2.new(0.0637589768, 0, 0.113416299, 0)
 		local EXONHUB_MINIMIZED_POSITION = UDim2.new(0.467708319 + 0.0637589768 * 0.5, 0, 0.0692661181, 0)
@@ -111,6 +113,33 @@
 			autoFishPhase = 0,
 			autoFishPhaseConn = nil,
 			suppressAutoFishSync = false,
+			autoMineRaceRunning = false,
+			autoMineRaceLoopActive = false,
+			autoMineRaceSessionId = 0,
+			autoMineRaceTween = nil,
+			autoMineRaceMined = {},
+			autoMineRaceRowSaved = {},
+			suppressAutoMineRaceSync = false,
+			autoQuestRunning = false,
+			autoQuestLoopActive = false,
+			autoQuestTween = nil,
+			autoQuestVisitedEggs = {},
+			autoQuestBossHits = 0,
+			autoQuestOrbHits = 0,
+			autoQuestEggHits = 0,
+			autoQuestLastKind = nil,
+			autoQuestLastTarget = nil,
+			autoQuestEggAreaReady = false,
+			autoQuestWasAttackingBoss = false,
+			suppressAutoQuestSync = false,
+			automationCharacterCollisionBackup = nil,
+			autoSaveSettingsEnabled = true,
+			minimizeHotkey = "LeftAlt",
+			settingsSavePending = false,
+			suppressSettingsPersist = false,
+			suppressSettingsDropdownSync = false,
+			pendingSettingsRestore = nil,
+			suppressAutoSaveSettingsSync = false,
 			autoUpgradeRodRunning = false,
 			autoUpgradeRodLoopActive = false,
 			autoUpgradeRodPending = false,
@@ -170,6 +199,7 @@
 			caveAutoOpenSlots = {},
 			autoOpenShellEggSlots = {},
 			crateAutoDeleteIds = {},
+			crateAutoDeleteLabels = {},
 			suppressAutoRebirthLevelSync = false,
 			suppressEquipBestSwordSync = false,
 			suppressEquipBestSkinSync = false,
@@ -202,6 +232,7 @@
 		local UI = {
 			caveAutoOpenToggles = {},
 			shellEggAutoOpenToggles = {},
+			crateDeleteDropdowns = {},
 		}
 		local C = {
 			sharedConstants = nil,
@@ -279,6 +310,21 @@
 		local FISHING_PHASE_IDLE = 0
 		local AUTO_FISH_POLL = 0.35
 		local AUTO_FISH_CAST_TIMEOUT = 45
+		local AUTO_MINE_RACE_SPEED = 100
+		local AUTO_MINE_RACE_RESPAWN = Vector3.new(20433.5, 702.222, -1688.27)
+		local AUTO_MINE_RACE_COLOR_TOL = 20
+		local AUTO_MINE_RACE_MINE_RGB = { 255, 99, 99 }
+		local AUTO_MINE_RACE_SAFE_RGB = { 109, 193, 0 }
+		local AUTO_MINE_RACE_GRAY_RGB = { 60, 61, 74 }
+		local AUTO_MINE_RACE_ROW_COUNT = 20
+		local AUTO_MINE_RACE_RESET_WAIT = 3.5
+		local AUTO_MINE_RACE_FINISH_WAIT = 10.5
+		local AUTO_MINE_RACE_POLL = 0.02
+		local AUTO_QUEST_ORB_MESH_ID = "7036884767"
+		local AUTO_QUEST_TWEEN_SPEED = 250
+		local AUTO_QUEST_EGG_TELEPORT = CFrame.new(1910.08, 204.22, -976.7)
+		local AUTO_QUEST_POLL = 0.05
+		local AUTO_QUEST_EGG_VISITED_TTL = 3
 		local AUTO_UPGRADE_ROD_POLL = 1.5
 		local AUTO_UPGRADE_ROD_BUY_COOLDOWN = 1.3
 		local AUTO_GOALS_BALL_ORDER = { "Ball2", "Ball1", "Ball" }
@@ -1028,6 +1074,477 @@
 			return saved
 		end
 
+		function H.canFilesystemPersist()
+			return type(writefile) == "function"
+				and type(readfile) == "function"
+				and type(isfolder) == "function"
+				and type(makefolder) == "function"
+		end
+
+		function H.ensureSettingsDir()
+			if not H.canFilesystemPersist() then
+				return false
+			end
+
+			pcall(function()
+				if not isfolder("ExonHub") then
+					makefolder("ExonHub")
+				end
+				if not isfolder(EXONHUB_SETTINGS_DIR) then
+					makefolder(EXONHUB_SETTINGS_DIR)
+				end
+			end)
+
+			return true
+		end
+
+		function H.getMinimizeHotkeyName()
+			local name = S.minimizeHotkey
+			if type(name) == "string" and Enum.KeyCode[name] then
+				return name
+			end
+			return "LeftAlt"
+		end
+
+		function H.getMinimizeHotkeyEnum()
+			return Enum.KeyCode[H.getMinimizeHotkeyName()]
+		end
+
+		function H.syncMinimizeHotkeyKeybind(keyName)
+			if S.suppressSettingsDropdownSync or not UI.minimizeHotkeyKeybindElement then
+				return
+			end
+			if UI.minimizeHotkeyKeybindElement.Set then
+				pcall(function()
+					UI.minimizeHotkeyKeybindElement:Set(keyName)
+				end)
+			end
+		end
+
+		function H.setMinimizeHotkey(keyName, fromKeybind)
+			if type(keyName) ~= "string" or not Enum.KeyCode[keyName] then
+				return
+			end
+
+			S.minimizeHotkey = keyName
+
+			if UI.window and UI.window.SetToggleKey then
+				pcall(function()
+					UI.window:SetToggleKey(Enum.KeyCode[keyName])
+				end)
+			end
+
+			if not fromKeybind then
+				H.syncMinimizeHotkeyKeybind(keyName)
+			end
+
+			H.scheduleSettingsSave()
+		end
+
+		function H.getSettingsFile()
+			return EXONHUB_SETTINGS_DIR .. "/" .. tostring(player.UserId) .. ".json"
+		end
+
+		function H.getAutoBossTargetLabels()
+			local labels = {}
+			for _, label in ipairs(AUTO_BOSS_OPTION_LABELS) do
+				local bossId = AUTO_BOSS_LABEL_TO_ID[label]
+				if bossId and S.autoBossTargets[bossId] then
+					table.insert(labels, label)
+				end
+			end
+			return labels
+		end
+
+		function H.getAutoUpgradeTargetLabels()
+			local labels = {}
+			for _, label in ipairs(AUTO_UPGRADE_SLOT_LABELS) do
+				local slotId = AUTO_UPGRADE_LABEL_TO_ID[label]
+				if slotId and S.autoUpgradeTargets[slotId] then
+					table.insert(labels, label)
+				end
+			end
+			return labels
+		end
+
+		function H.serializeCrateAutoDeleteIds()
+			local serialized = {}
+			for slotId, deleteSet in pairs(S.crateAutoDeleteIds) do
+				local ids = {}
+				for key, enabled in pairs(deleteSet) do
+					local id = tonumber(key)
+					if enabled and id then
+						table.insert(ids, id)
+					end
+				end
+				if #ids > 0 then
+					serialized[slotId] = ids
+				end
+			end
+			return serialized
+		end
+
+		function H.applySerializedCrateAutoDeleteIds(serialized)
+			if type(serialized) ~= "table" then
+				return
+			end
+
+			for slotId, ids in pairs(serialized) do
+				local deleteSet = {}
+				if type(ids) == "table" then
+					for _, id in ipairs(ids) do
+						local numericId = tonumber(id)
+						if numericId then
+							deleteSet[numericId] = true
+							deleteSet[tostring(numericId)] = true
+						end
+					end
+				end
+				S.crateAutoDeleteIds[slotId] = deleteSet
+			end
+		end
+
+		function H.copyBoolMap(source)
+			local copy = {}
+			if type(source) ~= "table" then
+				return copy
+			end
+			for key, value in pairs(source) do
+				copy[key] = value == true
+			end
+			return copy
+		end
+
+		function H.copyStringList(source)
+			local copy = {}
+			if type(source) ~= "table" then
+				return copy
+			end
+			for index, value in ipairs(source) do
+				if type(value) == "string" then
+					copy[index] = value
+				end
+			end
+			return copy
+		end
+
+		function H.applyTargetBoolMap(target, source, knownKeys)
+			for _, key in ipairs(knownKeys) do
+				target[key] = false
+			end
+			if type(source) ~= "table" then
+				return
+			end
+			for _, key in ipairs(knownKeys) do
+				if source[key] ~= nil then
+					target[key] = source[key] == true
+				end
+			end
+		end
+
+		function H.applyAutoUpgradeTargetsFromLabels(labels)
+			H.applyTargetBoolMap(S.autoUpgradeTargets, {}, { "primary_weapon", "secondary_weapon", "skin" })
+			for _, label in ipairs(H.normalizeDropdownSelection(labels)) do
+				local slotId = AUTO_UPGRADE_LABEL_TO_ID[label]
+				if slotId then
+					S.autoUpgradeTargets[slotId] = true
+				end
+			end
+		end
+
+		function H.applyAutoBossTargetsFromLabels(labels)
+			H.applyTargetBoolMap(S.autoBossTargets, {}, { "borock", "demon_king" })
+			for _, label in ipairs(H.normalizeDropdownSelection(labels)) do
+				local bossId = AUTO_BOSS_LABEL_TO_ID[label]
+				if bossId then
+					S.autoBossTargets[bossId] = true
+				end
+			end
+		end
+
+		function H.serializeCrateAutoDeleteLabels()
+			local serialized = {}
+			if type(S.crateAutoDeleteLabels) ~= "table" then
+				return serialized
+			end
+			for slotId, labels in pairs(S.crateAutoDeleteLabels) do
+				if type(labels) == "table" and #labels > 0 then
+					serialized[slotId] = H.copyStringList(labels)
+				end
+			end
+			return serialized
+		end
+
+		function H.getCrateAutoDeleteLabels(slotId)
+			local labels = S.crateAutoDeleteLabels and S.crateAutoDeleteLabels[slotId]
+			if type(labels) == "table" then
+				return H.copyStringList(labels)
+			end
+			return {}
+		end
+
+		function H.preparePendingSettingsRestore()
+			local data = H.loadStoredSettings()
+			if not data or data.autoSaveSettings ~= true then
+				S.pendingSettingsRestore = nil
+				return false
+			end
+
+			S.pendingSettingsRestore = data
+			S.autoSaveSettingsEnabled = true
+			S.suppressSettingsPersist = true
+
+			local values = type(data.values) == "table" and data.values or {}
+
+			if values.autoRebirthTargetLevel then
+				local level = tonumber(values.autoRebirthTargetLevel)
+				if level then
+					S.autoRebirthTargetLevel = math.max(MIN_REBIRTH_TARGET_LEVEL, math.floor(level))
+				end
+			end
+			if type(values.weaponSortStat) == "string" then
+				S.weaponSortStat = values.weaponSortStat
+			end
+			if type(values.skinSortStat) == "string" then
+				S.skinSortStat = values.skinSortStat
+			end
+			if type(values.minimizeHotkey) == "string" and Enum.KeyCode[values.minimizeHotkey] then
+				S.minimizeHotkey = values.minimizeHotkey
+			end
+
+			if type(values.autoUpgradeTargetMap) == "table" then
+				H.applyTargetBoolMap(
+					S.autoUpgradeTargets,
+					values.autoUpgradeTargetMap,
+					{ "primary_weapon", "secondary_weapon", "skin" }
+				)
+			elseif type(values.autoUpgradeTargets) == "table" then
+				H.applyAutoUpgradeTargetsFromLabels(values.autoUpgradeTargets)
+			end
+
+			if type(values.autoBossTargetMap) == "table" then
+				H.applyTargetBoolMap(S.autoBossTargets, values.autoBossTargetMap, { "borock", "demon_king" })
+			elseif type(values.autoBossTargets) == "table" then
+				H.applyAutoBossTargetsFromLabels(values.autoBossTargets)
+			end
+
+			H.applySerializedCrateAutoDeleteIds(data.crateAutoDeleteIds)
+
+			if type(data.crateAutoDeleteLabels) == "table" then
+				S.crateAutoDeleteLabels = {}
+				for slotId, labels in pairs(data.crateAutoDeleteLabels) do
+					if type(labels) == "table" then
+						S.crateAutoDeleteLabels[slotId] = H.copyStringList(labels)
+					end
+				end
+			end
+
+			if type(data.caveAutoOpenSlots) == "table" then
+				S.caveAutoOpenSlots = H.copyBoolMap(data.caveAutoOpenSlots)
+			end
+			if type(data.shellEggAutoOpenSlots) == "table" then
+				S.autoOpenShellEggSlots = H.copyBoolMap(data.shellEggAutoOpenSlots)
+			end
+
+			return true
+		end
+
+		function H.buildSettingsSnapshot()
+			return {
+				version = 1,
+				autoSaveSettings = S.autoSaveSettingsEnabled == true,
+				toggles = {
+					clicker = S.clickerRunning == true,
+					farm = S.running == true,
+					autoQuest = S.autoQuestRunning == true,
+					autoUpgrade = S.autoUpgradeRunning == true,
+					equipBestSword = S.equipBestSwordRunning == true,
+					equipBestSkin = S.equipBestSkinRunning == true,
+					equipBestPet = S.equipBestPetRunning == true,
+					equipBestArtifact = S.equipBestArtifactRunning == true,
+					autoEvolvePets = S.autoEvolvePetsRunning == true,
+					autoEvolveArtifacts = S.autoEvolveArtifactsRunning == true,
+					autoDeleteWeapons = S.autoDeleteWeaponsRunning == true,
+					autoDeleteSkins = S.autoDeleteSkinsRunning == true,
+					autoRebirth = S.autoRebirthRunning == true,
+					autoMassUpgrade = S.autoMassUpgradeRunning == true,
+					autoSellChest = S.autoSellChestRunning == true,
+					autoOpenChest = S.autoOpenChestRunning == true,
+					autoBoss = S.autoBossRunning == true,
+					antiAfk = S.antiAfkRunning == true,
+					autoKill = S.autoKillRunning == true,
+					streamerMode = S.streamerModeRunning == true,
+					autoFish = S.autoFishRunning == true,
+					autoUpgradeRod = S.autoUpgradeRodRunning == true,
+					autoGoals = S.autoGoalsRunning == true,
+					autoMineRace = S.autoMineRaceRunning == true,
+				},
+				values = {
+					autoRebirthTargetLevel = S.autoRebirthTargetLevel,
+					weaponSortStat = S.weaponSortStat,
+					skinSortStat = S.skinSortStat,
+					autoBossTargets = H.getAutoBossTargetLabels(),
+					autoBossTargetMap = H.copyBoolMap(S.autoBossTargets),
+					autoUpgradeTargets = H.getAutoUpgradeTargetLabels(),
+					autoUpgradeTargetMap = H.copyBoolMap(S.autoUpgradeTargets),
+					minimizeHotkey = H.getMinimizeHotkeyName(),
+				},
+				caveAutoOpenSlots = H.copyBoolMap(S.caveAutoOpenSlots),
+				shellEggAutoOpenSlots = H.copyBoolMap(S.autoOpenShellEggSlots),
+				crateAutoDeleteIds = H.serializeCrateAutoDeleteIds(),
+				crateAutoDeleteLabels = H.serializeCrateAutoDeleteLabels(),
+			}
+		end
+
+		function H.saveSettingsSnapshot(force)
+			if not H.canFilesystemPersist() then
+				return false
+			end
+			if not force and not S.autoSaveSettingsEnabled then
+				return false
+			end
+
+			H.ensureSettingsDir()
+
+			local HttpService = game:GetService("HttpService")
+			local ok, json = pcall(function()
+				return HttpService:JSONEncode(H.buildSettingsSnapshot())
+			end)
+			if not ok or not json then
+				return false
+			end
+
+			return pcall(writefile, H.getSettingsFile(), json)
+		end
+
+		function H.loadStoredSettings()
+			if not H.canFilesystemPersist() then
+				return nil
+			end
+
+			local path = H.getSettingsFile()
+			if not isfile(path) then
+				return nil
+			end
+
+			local ok, raw = pcall(readfile, path)
+			if not ok or type(raw) ~= "string" or raw == "" then
+				return nil
+			end
+
+			local HttpService = game:GetService("HttpService")
+			local decodeOk, data = pcall(function()
+				return HttpService:JSONDecode(raw)
+			end)
+			if decodeOk and type(data) == "table" then
+				return data
+			end
+
+			return nil
+		end
+
+		function H.scheduleSettingsSave()
+			if S.suppressSettingsPersist or not S.autoSaveSettingsEnabled then
+				return
+			end
+			if S.settingsSavePending then
+				return
+			end
+
+			S.settingsSavePending = true
+			task.delay(0.35, function()
+				S.settingsSavePending = false
+				H.saveSettingsSnapshot()
+			end)
+		end
+
+		function H.setDropdownSelection(element, value)
+			if element and element.Set then
+				pcall(function()
+					element:Set(value)
+				end)
+			end
+		end
+
+		function H.applyStoredToggle(toggles, key, setter)
+			if toggles and toggles[key] and setter then
+				setter(true, false)
+			end
+		end
+
+		function H.restoreSavedSettingsOnLoad()
+			local data = S.pendingSettingsRestore or H.loadStoredSettings()
+			if not data or data.autoSaveSettings ~= true then
+				S.pendingSettingsRestore = nil
+				return false
+			end
+
+			S.autoSaveSettingsEnabled = true
+			H.syncAutoSaveSettingsToggle(true)
+			S.suppressSettingsPersist = true
+			S.suppressSettingsDropdownSync = true
+
+			H.syncAutoRebirthLevelInput(S.autoRebirthTargetLevel)
+			H.setDropdownSelection(UI.weaponSortDropdownElement, S.weaponSortStat)
+			H.setDropdownSelection(UI.skinSortDropdownElement, S.skinSortStat)
+			H.setDropdownSelection(UI.autoBossDropdownElement, H.getAutoBossTargetLabels())
+			H.setDropdownSelection(UI.autoUpgradeDropdownElement, H.getAutoUpgradeTargetLabels())
+			H.setMinimizeHotkey(H.getMinimizeHotkeyName(), false)
+
+			if type(data.crateAutoDeleteLabels) == "table" then
+				for slotId, labels in pairs(data.crateAutoDeleteLabels) do
+					if type(labels) == "table" then
+						H.setDropdownSelection(UI.crateDeleteDropdowns[slotId], labels)
+					end
+				end
+			end
+
+			if type(data.caveAutoOpenSlots) == "table" then
+				for slotId, enabled in pairs(data.caveAutoOpenSlots) do
+					H.setCaveAutoOpenSlot(slotId, enabled == true, false)
+				end
+			end
+
+			if type(data.shellEggAutoOpenSlots) == "table" then
+				for slotId, enabled in pairs(data.shellEggAutoOpenSlots) do
+					H.setAutoOpenShellEggSlot(slotId, enabled == true, false)
+				end
+			end
+
+			local toggles = data.toggles
+			H.applyStoredToggle(toggles, "clicker", H.setAutoClicker)
+			H.applyStoredToggle(toggles, "farm", H.setRunning)
+			H.applyStoredToggle(toggles, "autoQuest", H.setAutoQuest)
+			H.applyStoredToggle(toggles, "autoUpgrade", H.setAutoUpgrade)
+			H.applyStoredToggle(toggles, "equipBestSword", H.setEquipBestSword)
+			H.applyStoredToggle(toggles, "equipBestSkin", H.setEquipBestSkin)
+			H.applyStoredToggle(toggles, "equipBestPet", H.setEquipBestPet)
+			H.applyStoredToggle(toggles, "equipBestArtifact", H.setEquipBestArtifact)
+			H.applyStoredToggle(toggles, "autoEvolvePets", H.setAutoEvolvePets)
+			H.applyStoredToggle(toggles, "autoEvolveArtifacts", H.setAutoEvolveArtifacts)
+			H.applyStoredToggle(toggles, "autoDeleteWeapons", H.setAutoDeleteWeapons)
+			H.applyStoredToggle(toggles, "autoDeleteSkins", H.setAutoDeleteSkins)
+			H.applyStoredToggle(toggles, "autoRebirth", H.setAutoRebirth)
+			H.applyStoredToggle(toggles, "autoMassUpgrade", H.setAutoMassUpgrade)
+			H.applyStoredToggle(toggles, "autoSellChest", H.setAutoSellChest)
+			H.applyStoredToggle(toggles, "autoOpenChest", H.setAutoOpenChest)
+			H.applyStoredToggle(toggles, "autoBoss", H.setAutoBoss)
+			H.applyStoredToggle(toggles, "antiAfk", H.setAntiAfk)
+			H.applyStoredToggle(toggles, "autoKill", H.setAutoKill)
+			H.applyStoredToggle(toggles, "streamerMode", H.setStreamerMode)
+			H.applyStoredToggle(toggles, "autoFish", H.setAutoFish)
+			H.applyStoredToggle(toggles, "autoUpgradeRod", H.setAutoUpgradeRod)
+			H.applyStoredToggle(toggles, "autoGoals", H.setAutoGoals)
+			H.applyStoredToggle(toggles, "autoMineRace", H.setAutoMineRace)
+
+			S.suppressSettingsDropdownSync = false
+			S.suppressSettingsPersist = false
+			S.pendingSettingsRestore = nil
+			H.saveSettingsSnapshot(true)
+			print("[ExonHub] Restored saved settings")
+			return true
+		end
+
 		function H.formatUsageDuration(totalSeconds)
 			local seconds = math.max(0, math.floor(totalSeconds or 0))
 			local days = math.floor(seconds / 86400)
@@ -1387,6 +1904,39 @@
 			S.suppressAutoUpgradeRodSync = false
 		end
 
+		function H.syncAutoMineRaceToggle(state)
+			if S.suppressAutoMineRaceSync or not UI.autoMineRaceToggleElement or not UI.autoMineRaceToggleElement.Set then
+				return
+			end
+			S.suppressAutoMineRaceSync = true
+			pcall(function()
+				UI.autoMineRaceToggleElement:Set(state)
+			end)
+			S.suppressAutoMineRaceSync = false
+		end
+
+		function H.syncAutoQuestToggle(state)
+			if S.suppressAutoQuestSync or not UI.autoQuestToggleElement or not UI.autoQuestToggleElement.Set then
+				return
+			end
+			S.suppressAutoQuestSync = true
+			pcall(function()
+				UI.autoQuestToggleElement:Set(state)
+			end)
+			S.suppressAutoQuestSync = false
+		end
+
+		function H.syncAutoSaveSettingsToggle(state)
+			if S.suppressAutoSaveSettingsSync or not UI.autoSaveSettingsToggleElement or not UI.autoSaveSettingsToggleElement.Set then
+				return
+			end
+			S.suppressAutoSaveSettingsSync = true
+			pcall(function()
+				UI.autoSaveSettingsToggleElement:Set(state)
+			end)
+			S.suppressAutoSaveSettingsSync = false
+		end
+
 		function H.shouldAutoGoalsBringBallToPlayer()
 			return S.autoFishRunning == true and S.autoGoalsRunning == true
 		end
@@ -1588,6 +2138,7 @@
 					H.syncAutoRebirthLevelInput(level)
 				end
 			end
+			H.scheduleSettingsSave()
 		end
 
 		function H.getPlayerController()
@@ -1976,6 +2527,7 @@
 					S.autoUpgradeTargets[slotId] = true
 				end
 			end
+			H.scheduleSettingsSave()
 		end
 
 		function H.getGoldAmount()
@@ -2326,6 +2878,7 @@
 					S.autoBossTargets[bossId] = true
 				end
 			end
+			H.scheduleSettingsSave()
 		end
 
 		function H.getBossDefinition(bossId)
@@ -4591,6 +5144,990 @@
 			end)
 		end
 
+		function H.mineRaceColorClose(color3, r, g, b)
+			if not color3 then
+				return false
+			end
+			local cr = math.round(color3.R * 255)
+			local cg = math.round(color3.G * 255)
+			local cb = math.round(color3.B * 255)
+			local tol = AUTO_MINE_RACE_COLOR_TOL
+			return math.abs(cr - r) <= tol and math.abs(cg - g) <= tol and math.abs(cb - b) <= tol
+		end
+
+		function H.isMineRaceMineColor(color3)
+			local c = AUTO_MINE_RACE_MINE_RGB
+			return H.mineRaceColorClose(color3, c[1], c[2], c[3])
+		end
+
+		function H.isMineRaceSafeColor(color3)
+			local c = AUTO_MINE_RACE_SAFE_RGB
+			return H.mineRaceColorClose(color3, c[1], c[2], c[3])
+		end
+
+		function H.isMineRaceGrayColor(color3)
+			local c = AUTO_MINE_RACE_GRAY_RGB
+			return H.mineRaceColorClose(color3, c[1], c[2], c[3])
+		end
+
+		function H.getMineRaceMinefield()
+			return H.getWorkspacePath({ "Scene", "Minefield" })
+		end
+
+		function H.getMineRaceCellsFolder()
+			local minefield = H.getMineRaceMinefield()
+			return minefield and minefield:FindFirstChild("Cells")
+		end
+
+		function H.getMineRaceCellButton(cell)
+			if not cell then
+				return nil
+			end
+			local button = cell:FindFirstChild("Button")
+			if button and button:IsA("BasePart") then
+				return button
+			end
+			return nil
+		end
+
+		function H.getMineRaceCellPosition(cell)
+			if not cell then
+				return nil
+			end
+			if cell:IsA("Model") then
+				return cell:GetPivot().Position
+			end
+			if cell:IsA("BasePart") then
+				return cell.Position
+			end
+			return nil
+		end
+
+		function H.backupAutomationCharacterCollision()
+			local character = player.Character
+			if not character or S.automationCharacterCollisionBackup then
+				return
+			end
+
+			S.automationCharacterCollisionBackup = {}
+			for _, part in ipairs(character:GetDescendants()) do
+				if part:IsA("BasePart") then
+					S.automationCharacterCollisionBackup[part] = {
+						canCollide = part.CanCollide,
+						canTouch = part.CanTouch,
+						anchored = part.Anchored,
+					}
+				end
+			end
+		end
+
+		function H.restoreAutomationCharacterCollision()
+			local backup = S.automationCharacterCollisionBackup
+			if not backup then
+				return
+			end
+
+			for part, state in pairs(backup) do
+				if part and part.Parent then
+					pcall(function()
+						if state.canCollide ~= nil then
+							part.CanCollide = state.canCollide
+						end
+						if state.canTouch ~= nil then
+							part.CanTouch = state.canTouch
+						end
+						if state.anchored ~= nil then
+							part.Anchored = state.anchored
+						end
+					end)
+				end
+			end
+
+			S.automationCharacterCollisionBackup = nil
+		end
+
+		function H.applyAutomationCharacterNoCollide()
+			H.backupAutomationCharacterCollision()
+			local character = player.Character
+			if not character then
+				return
+			end
+
+			for _, part in ipairs(character:GetDescendants()) do
+				if part:IsA("BasePart") then
+					part.CanCollide = false
+				end
+			end
+		end
+
+		function H.uprightCharacterRoot(root)
+			if not root then
+				return
+			end
+
+			local pos = root.Position
+			local look = root.CFrame.LookVector
+			local flatLook = Vector3.new(look.X, 0, look.Z)
+			if flatLook.Magnitude > 0.05 then
+				root.CFrame = CFrame.lookAt(pos, pos + flatLook.Unit)
+			else
+				root.CFrame = CFrame.new(pos)
+			end
+		end
+
+		function H.restoreCharacterMovementState()
+			H.cancelAutoQuestTween()
+			H.cancelMineRaceTween()
+			H.restoreAutomationCharacterCollision()
+
+			local character = player.Character
+			if not character then
+				return
+			end
+
+			local root = character:FindFirstChild("HumanoidRootPart")
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+			if root then
+				root.Anchored = false
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.zero
+				H.uprightCharacterRoot(root)
+
+				for _, part in ipairs(character:GetDescendants()) do
+					if part:IsA("BasePart") then
+						part.AssemblyLinearVelocity = Vector3.zero
+						part.AssemblyAngularVelocity = Vector3.zero
+					end
+				end
+			end
+
+			if humanoid then
+				humanoid.PlatformStand = false
+				humanoid.Sit = false
+				humanoid.AutoRotate = true
+			end
+		end
+
+		function H.cancelMineRaceTween()
+			if S.autoMineRaceTween then
+				pcall(function()
+					S.autoMineRaceTween:Cancel()
+				end)
+				S.autoMineRaceTween = nil
+			end
+		end
+
+		function H.isMineRaceActive()
+			return S.autoMineRaceRunning == true
+		end
+
+		function H.clearMineRaceProgress()
+			S.autoMineRaceMined = {}
+			S.autoMineRaceRowSaved = {}
+		end
+
+		function H.setMineRaceNoCollide(enabled)
+			if enabled then
+				H.restoreAutomationCharacterCollision()
+			else
+				H.applyAutomationCharacterNoCollide()
+			end
+		end
+
+		function H.mineRaceRespawnPlayer()
+			local root = H.getCharacterRoot()
+			if not root then
+				return
+			end
+			root.Anchored = false
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.AssemblyAngularVelocity = Vector3.zero
+			root.CFrame = CFrame.new(AUTO_MINE_RACE_RESPAWN + Vector3.new(0, 50, 0))
+			task.wait(0.05)
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.AssemblyAngularVelocity = Vector3.zero
+			root.CFrame = CFrame.new(AUTO_MINE_RACE_RESPAWN)
+		end
+
+		function H.mineRaceAnchorRoot(anchored)
+			local root = H.getCharacterRoot()
+			if not root then
+				return
+			end
+			root.Anchored = anchored
+			if anchored then
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.zero
+			end
+		end
+
+		function H.mineRaceCheckMineNearby(cellsFolder, rowIndex, watchCell)
+			local root = H.getCharacterRoot()
+			if not root then
+				return false
+			end
+
+			if watchCell then
+				local btn = H.getMineRaceCellButton(watchCell)
+				if btn and H.isMineRaceMineColor(btn.Color) then
+					local pos = H.getMineRaceCellPosition(watchCell)
+					if pos and (pos - root.Position).Magnitude < 5 then
+						return true
+					end
+				end
+			end
+
+			if cellsFolder and rowIndex then
+				for row = math.max(1, rowIndex - 1), math.min(AUTO_MINE_RACE_ROW_COUNT, rowIndex + 1) do
+					local rowFolder = cellsFolder:FindFirstChild("Row" .. row)
+					if rowFolder then
+						for _, cell in ipairs(rowFolder:GetChildren()) do
+							if cell.Name == "MineCell" then
+								local btn = H.getMineRaceCellButton(cell)
+								if btn and H.isMineRaceMineColor(btn.Color) then
+									local pos = H.getMineRaceCellPosition(cell)
+									if pos and (pos - root.Position).Magnitude < 5 then
+										return true
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+
+			return false
+		end
+
+		function H.tweenMineRaceTo(targetCFrame, watchCell, cellsFolder, rowIndex)
+			local root = H.getCharacterRoot()
+			if not root or not targetCFrame then
+				return false
+			end
+
+			local goal = (typeof(targetCFrame) == "CFrame") and targetCFrame or targetCFrame.CFrame
+			goal = goal * CFrame.new(0, 2.5, 0)
+
+			local dist = (goal.Position - root.Position).Magnitude
+			local duration = dist / AUTO_MINE_RACE_SPEED
+			if duration <= 0 then
+				return true
+			end
+
+			H.cancelMineRaceTween()
+
+			local tween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
+				CFrame = goal,
+			})
+			S.autoMineRaceTween = tween
+			local finished = false
+			tween.Completed:Connect(function()
+				finished = true
+			end)
+			tween:Play()
+
+			local deadline = os.clock() + duration + 0.2
+			while not finished and os.clock() < deadline do
+				if not H.isMineRaceActive() then
+					H.cancelMineRaceTween()
+					return false
+				end
+				if H.mineRaceCheckMineNearby(cellsFolder, rowIndex, watchCell) then
+					H.cancelMineRaceTween()
+					H.mineRaceAnchorRoot(true)
+					return false
+				end
+				task.wait(AUTO_MINE_RACE_POLL)
+			end
+
+			H.cancelMineRaceTween()
+			return finished
+		end
+
+		function H.retreatMineRaceFrom(cell)
+			local button = H.getMineRaceCellButton(cell)
+			if not button then
+				return
+			end
+
+			local root = H.getCharacterRoot()
+			if not root then
+				return
+			end
+
+			local function playTrackedTween(goalCFrame, duration)
+				if not H.isMineRaceActive() then
+					return false
+				end
+
+				H.cancelMineRaceTween()
+				local tween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
+					CFrame = goalCFrame,
+				})
+				S.autoMineRaceTween = tween
+				local finished = false
+				tween.Completed:Connect(function()
+					finished = true
+				end)
+				tween:Play()
+
+				local deadline = os.clock() + duration + 0.15
+				while not finished and os.clock() < deadline do
+					if not H.isMineRaceActive() then
+						H.cancelMineRaceTween()
+						return false
+					end
+					task.wait()
+				end
+
+				H.cancelMineRaceTween()
+				return finished
+			end
+
+			if not playTrackedTween(root.CFrame * CFrame.new(0, 8, 0), 0.15) then
+				return
+			end
+
+			local target = button.CFrame * CFrame.new(0, 8, 0)
+			local dist = (target.Position - root.Position).Magnitude
+			local duration = dist / (AUTO_MINE_RACE_SPEED * 1.5)
+			if not playTrackedTween(target, math.max(duration, 0.05)) then
+				return
+			end
+
+			playTrackedTween(button.CFrame * CFrame.new(0, 2.5, 0), 0.15)
+		end
+
+		function H.mineRaceCollectRowCandidates(rowFolder, root)
+			local nearest = math.huge
+			for _, cell in ipairs(rowFolder:GetChildren()) do
+				if cell.Name == "MineCell" then
+					local pos = H.getMineRaceCellPosition(cell)
+					if pos then
+						local dist = (pos - root.Position).Magnitude
+						if dist < nearest then
+							nearest = dist
+						end
+					end
+				end
+			end
+
+			local radius = (nearest * 1.8) + 2
+			local candidates = {}
+			for _, cell in ipairs(rowFolder:GetChildren()) do
+				if cell.Name == "MineCell" and not S.autoMineRaceMined[cell] then
+					local btn = H.getMineRaceCellButton(cell)
+					if btn and (H.isMineRaceGrayColor(btn.Color) or H.isMineRaceSafeColor(btn.Color)) then
+						local pos = H.getMineRaceCellPosition(cell)
+						if pos and (pos - root.Position).Magnitude <= radius then
+							table.insert(candidates, cell)
+						end
+					end
+				end
+			end
+
+			table.sort(candidates, function(a, b)
+				local btnA = H.getMineRaceCellButton(a)
+				local btnB = H.getMineRaceCellButton(b)
+				local safeA = btnA and H.isMineRaceSafeColor(btnA.Color)
+				local safeB = btnB and H.isMineRaceSafeColor(btnB.Color)
+				if safeA and not safeB then
+					return true
+				end
+				if safeB and not safeA then
+					return false
+				end
+				local posA = H.getMineRaceCellPosition(a)
+				local posB = H.getMineRaceCellPosition(b)
+				if not posA or not posB then
+					return false
+				end
+				return (posA - root.Position).Magnitude < (posB - root.Position).Magnitude
+			end)
+
+			return candidates
+		end
+
+		function H.runAutoMineRaceLoop(sessionId)
+			local cellsFolder = H.getMineRaceCellsFolder()
+			if not cellsFolder then
+				H.setStatus("Mine race: Cells not found")
+				return
+			end
+
+			while H.isMineRaceActive() and sessionId == S.autoMineRaceSessionId do
+				H.setMineRaceNoCollide(false)
+
+				local boardReset = false
+				for _, saved in pairs(S.autoMineRaceRowSaved) do
+					local btn = saved and H.getMineRaceCellButton(saved)
+					if btn and H.isMineRaceGrayColor(btn.Color) then
+						H.clearMineRaceProgress()
+						H.mineRaceRespawnPlayer()
+						task.wait(1)
+						boardReset = true
+						break
+					end
+				end
+				if boardReset then
+					continue
+				end
+
+				local hitMine = false
+				local rowIndex = 1
+
+				while rowIndex <= AUTO_MINE_RACE_ROW_COUNT and H.isMineRaceActive() and sessionId == S.autoMineRaceSessionId do
+					H.setMineRaceNoCollide(false)
+
+					local rowFolder = cellsFolder:FindFirstChild("Row" .. rowIndex)
+					if not rowFolder then
+						hitMine = true
+						break
+					end
+
+					local saved = S.autoMineRaceRowSaved[rowIndex]
+					if saved and saved.Parent then
+						local savedBtn = H.getMineRaceCellButton(saved)
+						if savedBtn and H.isMineRaceMineColor(savedBtn.Color) then
+							S.autoMineRaceMined[saved] = true
+							S.autoMineRaceRowSaved[rowIndex] = nil
+							hitMine = true
+							break
+						end
+
+						if not H.tweenMineRaceTo(savedBtn and savedBtn.CFrame, saved, cellsFolder, rowIndex) then
+							hitMine = true
+							break
+						end
+
+						task.wait(0.1)
+						savedBtn = H.getMineRaceCellButton(saved)
+						if savedBtn and H.isMineRaceMineColor(savedBtn.Color) then
+							S.autoMineRaceMined[saved] = true
+							S.autoMineRaceRowSaved[rowIndex] = nil
+							hitMine = true
+							break
+						end
+
+						rowIndex = rowIndex + 1
+					else
+						local root = H.getCharacterRoot()
+						if not root then
+							hitMine = true
+							break
+						end
+
+						local candidates = H.mineRaceCollectRowCandidates(rowFolder, root)
+						local cell = candidates[1]
+						if cell then
+							local btn = H.getMineRaceCellButton(cell)
+							if not H.tweenMineRaceTo(btn and btn.CFrame, cell, cellsFolder, rowIndex) then
+								hitMine = true
+								break
+							end
+
+							task.wait(0.15)
+							local deadline = os.clock() + 3
+							btn = H.getMineRaceCellButton(cell)
+							while btn and not H.isMineRaceMineColor(btn.Color) and not H.isMineRaceSafeColor(btn.Color) and os.clock() < deadline do
+								if not H.isMineRaceActive() or sessionId ~= S.autoMineRaceSessionId then
+									return
+								end
+								task.wait(0.05)
+								btn = H.getMineRaceCellButton(cell)
+							end
+
+							btn = H.getMineRaceCellButton(cell)
+							if btn and H.isMineRaceMineColor(btn.Color) then
+								S.autoMineRaceMined[cell] = true
+								hitMine = true
+								break
+							elseif btn and H.isMineRaceSafeColor(btn.Color) then
+								S.autoMineRaceRowSaved[rowIndex] = cell
+								rowIndex = rowIndex + 1
+								task.wait(0.02)
+							else
+								break
+							end
+						else
+							if rowIndex == 1 then
+								hitMine = true
+								break
+							end
+
+							local prevSaved = S.autoMineRaceRowSaved[rowIndex - 1]
+							if prevSaved then
+								S.autoMineRaceMined[prevSaved] = true
+								S.autoMineRaceRowSaved[rowIndex - 1] = nil
+							end
+
+							local retreatCell = S.autoMineRaceRowSaved[rowIndex - 2]
+							if retreatCell and retreatCell.Parent then
+								H.retreatMineRaceFrom(retreatCell)
+								task.wait(0.1)
+							else
+								H.mineRaceRespawnPlayer()
+								task.wait(0.2)
+							end
+
+							rowIndex = math.max(1, rowIndex - 1)
+						end
+					end
+				end
+
+				if hitMine and H.isMineRaceActive() and sessionId == S.autoMineRaceSessionId then
+					H.setStatus("Mine race: hit mine, resetting...")
+					H.mineRaceAnchorRoot(true)
+					task.wait(AUTO_MINE_RACE_RESET_WAIT)
+					H.mineRaceRespawnPlayer()
+					H.mineRaceAnchorRoot(false)
+				elseif rowIndex > AUTO_MINE_RACE_ROW_COUNT and H.isMineRaceActive() and sessionId == S.autoMineRaceSessionId then
+					local root = H.getCharacterRoot()
+					if root then
+						local look = root.CFrame.LookVector
+						local prev = S.autoMineRaceRowSaved[AUTO_MINE_RACE_ROW_COUNT - 1]
+						local last = S.autoMineRaceRowSaved[AUTO_MINE_RACE_ROW_COUNT]
+						if prev and last then
+							local p1 = H.getMineRaceCellPosition(prev)
+							local p2 = H.getMineRaceCellPosition(last)
+							if p1 and p2 then
+								look = (p2 - p1).Unit
+							end
+						end
+						local ahead = CFrame.new(root.Position + look * 5) * root.CFrame.Rotation
+						H.tweenMineRaceTo(ahead, nil, cellsFolder, AUTO_MINE_RACE_ROW_COUNT)
+						task.wait(0.15)
+					end
+
+					local minefield = H.getMineRaceMinefield()
+					local endRace = minefield and minefield:FindFirstChild("EndRace")
+					if endRace then
+						local endCf = (endRace:IsA("Model") and endRace:GetPivot()) or endRace.CFrame
+						H.tweenMineRaceTo(endCf, nil, cellsFolder, AUTO_MINE_RACE_ROW_COUNT)
+						H.setStatus("Mine race: finished, waiting...")
+						task.wait(AUTO_MINE_RACE_FINISH_WAIT)
+						if H.isMineRaceActive() and sessionId == S.autoMineRaceSessionId then
+							H.clearMineRaceProgress()
+							H.mineRaceRespawnPlayer()
+						end
+					else
+						H.setStatus("Mine race: EndRace not found")
+						task.wait(2)
+					end
+				else
+					task.wait(0.2)
+				end
+			end
+
+			H.mineRaceAnchorRoot(false)
+			H.restoreCharacterMovementState()
+		end
+
+		function H.stopAutoMineRaceLoop()
+			S.autoMineRaceSessionId = S.autoMineRaceSessionId + 1
+			S.autoMineRaceRunning = false
+			H.restoreCharacterMovementState()
+		end
+
+		function H.startAutoMineRaceLoop()
+			if S.autoMineRaceLoopActive then
+				return
+			end
+			S.autoMineRaceLoopActive = true
+			S.autoMineRaceSessionId = S.autoMineRaceSessionId + 1
+			local sessionId = S.autoMineRaceSessionId
+			H.clearMineRaceProgress()
+
+			task.spawn(function()
+				H.runAutoMineRaceLoop(sessionId)
+				S.autoMineRaceLoopActive = false
+			end)
+		end
+
+		function H.getQuestTrackerScrollingFrame()
+			local gui = player:FindFirstChild("PlayerGui")
+			local hud = gui and gui:FindFirstChild("HUD")
+			local screen = hud and hud:FindFirstChild("Screen")
+			local tracker = screen and screen:FindFirstChild("QuestTracker")
+			local questBg = tracker and tracker:FindFirstChild("questBG")
+			return questBg and questBg:FindFirstChild("ScrollingFrame")
+		end
+
+		function H.parseActiveQuest()
+			local scrolling = H.getQuestTrackerScrollingFrame()
+			if not scrolling then
+				return nil
+			end
+
+			for _, widget in ipairs(scrolling:GetChildren()) do
+				if widget.Name == "questWgt" then
+					local desc = widget:FindFirstChild("desc")
+					local progBg = widget:FindFirstChild("progBG")
+					local prog = progBg and progBg:FindFirstChild("prog")
+					if desc and prog then
+						local descText = string.lower(desc.Text)
+						local progText = prog.Text
+						local currentText, goalText = string.match(progText, "(%d+)%s*/%s*(%d+)")
+						local goal = 0
+						local current = 0
+						local hasFraction = false
+						if currentText and goalText then
+							current = tonumber(currentText) or 0
+							goal = tonumber(goalText) or 0
+							hasFraction = true
+						else
+							local single = string.match(progText, "%d+")
+							if single then
+								goal = tonumber(single) or 0
+							end
+						end
+
+						if goal > 0 then
+							if string.find(descText, "borock", 1, true) then
+								return "Boss", "Borock", goal, current, hasFraction, desc
+							elseif string.find(descText, "demonking", 1, true) or string.find(descText, "demon king", 1, true) then
+								return "Boss", "DemonKing", goal, current, hasFraction, desc
+							elseif string.find(descText, "golden", 1, true) then
+								return "Egg", "Golden", goal, current, hasFraction, desc
+							elseif string.find(descText, "orbs", 1, true) or string.find(descText, "orb", 1, true) then
+								return "Orb", "Orb", goal, current, hasFraction, desc
+							end
+						end
+					end
+				end
+			end
+
+			return nil
+		end
+
+		function H.getQuestBossModel(targetKey)
+			if targetKey == "Borock" then
+				return H.getBossModel(AUTO_BOSS_DEFS.borock)
+			elseif targetKey == "DemonKing" then
+				return H.getBossModel(AUTO_BOSS_DEFS.demon_king)
+			end
+			return nil
+		end
+
+		function H.prefabHasMeshId(prefab, meshId)
+			if not prefab or not meshId then
+				return false
+			end
+			if prefab:IsA("MeshPart") and string.find(prefab.MeshId, meshId, 1, true) then
+				return true
+			end
+			local specialMesh = prefab:FindFirstChildOfClass("SpecialMesh")
+			if specialMesh and string.find(specialMesh.MeshId, meshId, 1, true) then
+				return true
+			end
+			return false
+		end
+
+		function H.findQuestOrbNode()
+			local root = H.getCharacterRoot()
+			if not root then
+				return nil
+			end
+
+			local folder = H.getNodesFolder()
+			if not folder then
+				return nil
+			end
+
+			local nearest = nil
+			local nearestDist = math.huge
+			for _, child in ipairs(folder:GetChildren()) do
+				if child.Name == "ResourceNode" and child:IsA("BasePart") then
+					local prefab = child:FindFirstChild("Prefab")
+					if prefab and H.prefabHasMeshId(prefab, AUTO_QUEST_ORB_MESH_ID) then
+						local dist = (root.Position - child.Position).Magnitude
+						if dist < nearestDist then
+							nearestDist = dist
+							nearest = child
+						end
+					end
+				end
+			end
+
+			return nearest
+		end
+
+		function H.findQuestEgg()
+			local root = H.getCharacterRoot()
+			if not root then
+				return nil
+			end
+
+			local nearest = nil
+			local nearestDist = math.huge
+			for _, descendant in ipairs(workspace:GetDescendants()) do
+				if descendant.Name == "Egg" and descendant:IsA("BasePart") and not S.autoQuestVisitedEggs[descendant] then
+					local dist = (root.Position - descendant.Position).Magnitude
+					if dist < nearestDist then
+						nearestDist = dist
+						nearest = descendant
+					end
+				end
+			end
+
+			return nearest
+		end
+
+		function H.cancelAutoQuestTween()
+			if S.autoQuestTween then
+				pcall(function()
+					S.autoQuestTween:Cancel()
+				end)
+				S.autoQuestTween = nil
+			end
+		end
+
+		function H.setAutoQuestNoCollide(enabled)
+			if enabled then
+				H.restoreAutomationCharacterCollision()
+			else
+				H.applyAutomationCharacterNoCollide()
+			end
+		end
+
+		function H.tweenAutoQuestTo(target)
+			local root = H.getCharacterRoot()
+			if not root or not target then
+				return false
+			end
+
+			local targetPos = target.Position
+			if not targetPos then
+				return false
+			end
+
+			local currentPos = root.Position
+			if math.abs(currentPos.Y - targetPos.Y) > 2 then
+				local yAligned = Vector3.new(currentPos.X, targetPos.Y, currentPos.Z)
+				local yDist = math.abs(currentPos.Y - targetPos.Y)
+				local yDuration = yDist / AUTO_QUEST_TWEEN_SPEED
+				local yGoal = CFrame.new(yAligned) * (root.CFrame - root.CFrame.Position)
+				H.cancelAutoQuestTween()
+				local yTween = TweenService:Create(root, TweenInfo.new(yDuration, Enum.EasingStyle.Linear), {
+					CFrame = yGoal,
+				})
+				S.autoQuestTween = yTween
+				yTween:Play()
+				while yTween.PlaybackState == Enum.PlaybackState.Playing and S.autoQuestRunning do
+					task.wait()
+				end
+				if not S.autoQuestRunning then
+					H.cancelAutoQuestTween()
+					return false
+				end
+				currentPos = root.Position
+			end
+
+			local flatTarget = Vector3.new(targetPos.X, currentPos.Y, targetPos.Z)
+			local flatDist = (currentPos - flatTarget).Magnitude
+			local duration = flatDist / AUTO_QUEST_TWEEN_SPEED
+			if duration <= 0 then
+				return true
+			end
+
+			local goal = CFrame.new(flatTarget) * (root.CFrame - root.CFrame.Position)
+			H.cancelAutoQuestTween()
+			local tween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
+				CFrame = goal,
+			})
+			S.autoQuestTween = tween
+			local finished = false
+			tween.Completed:Connect(function()
+				finished = true
+			end)
+			tween:Play()
+
+			local deadline = os.clock() + duration + 0.2
+			while not finished and os.clock() < deadline do
+				if not S.autoQuestRunning then
+					H.cancelAutoQuestTween()
+					return false
+				end
+				task.wait(AUTO_QUEST_POLL)
+			end
+
+			H.cancelAutoQuestTween()
+			return finished
+		end
+
+		function H.teleportCharacterTo(cframe)
+			local root = H.getCharacterRoot()
+			if not root or not cframe then
+				return false
+			end
+			root.Anchored = false
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.AssemblyAngularVelocity = Vector3.zero
+			root.CFrame = cframe
+			return true
+		end
+
+		function H.fireQuestBossClick()
+			local ok = pcall(function()
+				VirtualInputManager:SendMouseButtonEvent(100, 800, 0, true, game, 0)
+				task.wait(0.01)
+				VirtualInputManager:SendMouseButtonEvent(100, 800, 0, false, game, 0)
+			end)
+			if not ok then
+				H.backgroundTrainSwing()
+			end
+		end
+
+		function H.resetAutoQuestProgressCounters()
+			S.autoQuestBossHits = 0
+			S.autoQuestOrbHits = 0
+			S.autoQuestEggHits = 0
+			S.autoQuestWasAttackingBoss = false
+			S.autoQuestVisitedEggs = {}
+		end
+
+		function H.isAutoQuestComplete(kind, goal, current, hasFraction)
+			if hasFraction then
+				return current >= goal
+			end
+			if kind == "Boss" then
+				return S.autoQuestBossHits >= goal
+			elseif kind == "Orb" then
+				return S.autoQuestOrbHits >= goal
+			elseif kind == "Egg" then
+				return S.autoQuestEggHits >= goal
+			end
+			return false
+		end
+
+		function H.runAutoQuestCycle()
+			while S.autoQuestRunning do
+				H.setAutoQuestNoCollide(false)
+
+				local kind, targetKey, goal, current, hasFraction, descLabel = H.parseActiveQuest()
+				if not kind then
+					H.setStatus("Auto quest: starting quest...")
+					H.callGameService("StartQuestRequest")
+					task.wait(1)
+					continue
+				end
+
+				if S.autoQuestLastTarget ~= targetKey then
+					local previousKind = S.autoQuestLastKind
+					if previousKind == "Boss" and (kind == "Orb" or kind == "Egg") then
+						H.teleportCharacterTo(AUTO_QUEST_EGG_TELEPORT)
+						task.wait(1)
+						if kind == "Egg" then
+							S.autoQuestEggAreaReady = true
+						end
+					end
+					S.autoQuestLastKind = kind
+					S.autoQuestLastTarget = targetKey
+					H.resetAutoQuestProgressCounters()
+					if kind ~= "Egg" or previousKind ~= "Boss" then
+						S.autoQuestEggAreaReady = false
+					end
+				end
+
+				if H.isAutoQuestComplete(kind, goal, current, hasFraction) then
+					H.setStatus("Auto quest: completing quest...")
+					H.callGameService("EndQuestRequest")
+					task.wait(1)
+					if descLabel then
+						descLabel.Text = "a"
+					end
+					H.callGameService("StartQuestRequest")
+					H.resetAutoQuestProgressCounters()
+					S.autoQuestLastKind = nil
+					S.autoQuestLastTarget = nil
+					S.autoQuestEggAreaReady = false
+					task.wait(0.5)
+					continue
+				end
+
+				if kind == "Boss" then
+					local bossModel = H.getQuestBossModel(targetKey)
+					if bossModel then
+						local bossRoot = bossModel:FindFirstChild("Torso") or bossModel:FindFirstChild("HumanoidRootPart")
+						local humanoid = bossModel:FindFirstChildOfClass("Humanoid")
+						if bossRoot and humanoid and humanoid.Health > 0 then
+							S.autoQuestWasAttackingBoss = true
+							H.teleportCharacterTo(bossRoot.CFrame * CFrame.new(0, 0, 2))
+							H.fireQuestBossClick()
+						elseif S.autoQuestWasAttackingBoss then
+							S.autoQuestBossHits = S.autoQuestBossHits + 1
+							S.autoQuestWasAttackingBoss = false
+						end
+					end
+					task.wait(AUTO_QUEST_POLL)
+				elseif kind == "Orb" then
+					local orbNode = H.findQuestOrbNode()
+					if orbNode then
+						H.setStatus("Auto quest: collecting orb")
+						H.tweenAutoQuestTo(orbNode)
+						if S.autoQuestRunning then
+							task.wait(0.5)
+							S.autoQuestOrbHits = S.autoQuestOrbHits + 1
+						end
+					else
+						task.wait(0.5)
+					end
+					task.wait(0.1)
+				elseif kind == "Egg" then
+					if not S.autoQuestEggAreaReady then
+						H.teleportCharacterTo(AUTO_QUEST_EGG_TELEPORT)
+						S.autoQuestEggAreaReady = true
+						task.wait(1)
+					end
+
+					local egg = H.findQuestEgg()
+					if egg then
+						H.setStatus("Auto quest: collecting egg")
+						H.tweenAutoQuestTo(egg)
+						if S.autoQuestRunning then
+							S.autoQuestVisitedEggs[egg] = true
+							task.delay(AUTO_QUEST_EGG_VISITED_TTL, function()
+								S.autoQuestVisitedEggs[egg] = nil
+							end)
+							local waited = 0
+							while egg.Parent and waited < 1 and S.autoQuestRunning do
+								task.wait(0.1)
+								waited = waited + 0.1
+							end
+							S.autoQuestEggHits = S.autoQuestEggHits + 1
+							task.wait(0.2)
+						end
+					else
+						task.wait(0.5)
+					end
+				end
+			end
+
+			H.restoreCharacterMovementState()
+		end
+
+		function H.stopAutoQuestLoop()
+			S.autoQuestRunning = false
+			H.restoreCharacterMovementState()
+		end
+
+		function H.startAutoQuestLoop()
+			if S.autoQuestLoopActive then
+				return
+			end
+			S.autoQuestLoopActive = true
+			S.autoQuestLastKind = nil
+			S.autoQuestLastTarget = nil
+			S.autoQuestEggAreaReady = false
+			H.resetAutoQuestProgressCounters()
+
+			task.spawn(function()
+				H.runAutoQuestCycle()
+				S.autoQuestLoopActive = false
+			end)
+		end
+
 		function H.tryKickBeachBall(ball, goalPart)
 			if not ball or not goalPart then
 				return false
@@ -5385,8 +6922,11 @@
 
 		function H.setCrateAutoDeleteSelection(slotId, selected, rollOptions)
 			S.crateAutoDeleteIds[slotId] = {}
+			S.crateAutoDeleteLabels = S.crateAutoDeleteLabels or {}
+			S.crateAutoDeleteLabels[slotId] = {}
 			local normalized = H.normalizeDropdownSelection(selected)
 			for _, label in ipairs(normalized) do
+				table.insert(S.crateAutoDeleteLabels[slotId], label)
 				local itemId = H.resolveRollOptionItemId(label, rollOptions)
 				if itemId then
 					local id = tonumber(itemId)
@@ -5394,6 +6934,7 @@
 					S.crateAutoDeleteIds[slotId][tostring(id)] = true
 				end
 			end
+			H.scheduleSettingsSave()
 		end
 
 		function H.hasCrateAutoDeleteEnabled(slotId)
@@ -5897,7 +7438,7 @@
 			UI.caveAutoOpenToggles[slot.id] = section:Toggle({
 				Title = "Auto Open " .. slot.title,
 				Desc = slot.desc,
-				Value = false,
+				Value = S.caveAutoOpenSlots[slot.id] == true,
 				Callback = function(on)
 					if S.suppressCaveAutoOpenSync then
 						return
@@ -5913,7 +7454,7 @@
 			UI.shellEggAutoOpenToggles[slot.id] = section:Toggle({
 				Title = "Auto Open " .. slot.title,
 				Desc = slot.desc,
-				Value = false,
+				Value = S.autoOpenShellEggSlots[slot.id] == true,
 				Callback = function(on)
 					if S.suppressAutoOpenShellEggSync then
 						return
@@ -5982,6 +7523,26 @@
 			H.finalizeStaticSection(section)
 		end
 
+		function H.buildMineRaceEventSection(tab, sectionTitle)
+			local section = H.createStaticBoxSection(tab, sectionTitle, "solar:flag-bold")
+
+			UI.autoMineRaceToggleElement = section:Toggle({
+				Title = "Auto Mine Race",
+				Desc = "Shell Race minefield solver — tweens rows 1–20 and finishes at EndRace",
+				Value = false,
+				Callback = function(on)
+					if S.suppressAutoMineRaceSync then
+						return
+					end
+					if H.setAutoMineRace then
+						H.setAutoMineRace(on == true, true)
+					end
+				end,
+			})
+
+			H.finalizeStaticSection(section)
+		end
+
 		function H.createWorldCrateDeletePicker(section, slot)
 			local rollOptions = H.getWorldCrateRollOptions(slot)
 			if #rollOptions == 0 then
@@ -6002,10 +7563,13 @@
 					Title = "Auto Delete Drops",
 					Desc = slot.title .. " â€” sells selected drops after auto open only",
 					Values = displayValues,
-					Value = {},
+					Value = H.getCrateAutoDeleteLabels(slot.id),
 					Multi = true,
 					AllowNone = true,
 					Callback = function(selected)
+						if S.suppressSettingsDropdownSync then
+							return
+						end
 						H.setCrateAutoDeleteSelection(slot.id, selected, rollOptions)
 					end,
 				})
@@ -6013,6 +7577,8 @@
 
 			if not ok then
 				warn("[ExonHub] Auto delete dropdown failed for", slot.title, picker)
+			else
+				UI.crateDeleteDropdowns[slot.id] = picker
 			end
 		end
 
@@ -6326,6 +7892,7 @@
 					if onChange then
 						onChange()
 					end
+					H.scheduleSettingsSave()
 				end
 			end
 
@@ -6482,6 +8049,42 @@
 			return false, remoteName .. " unavailable"
 		end
 
+		function H.getWeaponInventoryEntry(key, inventory)
+			inventory = inventory or H.getWeaponInventoryData()
+			if not inventory or not key then
+				return nil
+			end
+			return inventory[key] or inventory[tostring(key)] or inventory[tonumber(key)]
+		end
+
+		function H.getWeaponAps(weaponsMod, entry)
+			local data = weaponsMod and entry and weaponsMod.Data[entry.id]
+			if not data then
+				return 0
+			end
+			return data.APS or 0
+		end
+
+		function H.assignBestWeaponHands(weaponsMod, inventory, primaryKey, secondaryKey)
+			if not secondaryKey then
+				return primaryKey, nil
+			end
+
+			local primaryEntry = H.getWeaponInventoryEntry(primaryKey, inventory)
+			local secondaryEntry = H.getWeaponInventoryEntry(secondaryKey, inventory)
+			if not primaryEntry or not secondaryEntry then
+				return primaryKey, secondaryKey
+			end
+
+			local primaryAps = H.getWeaponAps(weaponsMod, primaryEntry)
+			local secondaryAps = H.getWeaponAps(weaponsMod, secondaryEntry)
+			if secondaryAps > primaryAps then
+				return secondaryKey, primaryKey
+			end
+
+			return primaryKey, secondaryKey
+		end
+
 		function H.scoreWeaponEntry(weaponsMod, entry, stat)
 			local data = weaponsMod.Data[entry.id]
 			if not data then
@@ -6563,6 +8166,8 @@
 					break
 				end
 			end
+
+			mainKey, offhandKey = H.assignBestWeaponHands(weaponsMod, inventory, mainKey, offhandKey)
 
 			return mainKey, offhandKey
 		end
@@ -7846,7 +9451,7 @@
 				IconSize = EXONHUB_TOPBAR_ICON_SIZE,
 				IconThemed = false,
 				NewElements = true,
-				ToggleKey = Enum.KeyCode.LeftAlt,
+				ToggleKey = H.getMinimizeHotkeyEnum(),
 				OpenButton = {
 					Enabled = false,
 				},
@@ -7894,6 +9499,20 @@
 				end,
 			})
 
+			UI.autoQuestToggleElement = FarmSection:Toggle({
+				Title = "Auto Quest",
+				Desc = "Starts quests and completes Borock, Demon King, golden egg, and orb tasks",
+				Value = false,
+				Callback = function(on)
+					if S.suppressAutoQuestSync then
+						return
+					end
+					if H.setAutoQuest then
+						H.setAutoQuest(on == true, true)
+					end
+				end,
+			})
+
 			H.finalizeStaticSection(FarmSection)
 
 			local AutoUpgradeSection = H.createStaticBoxSection(FarmingTab, "Auto Upgrade")
@@ -7903,10 +9522,13 @@
 					Title = "Upgrade Targets",
 					Desc = "Splits gold evenly â€” always upgrades the lowest level item next",
 					Values = AUTO_UPGRADE_SLOT_LABELS,
-					Value = AUTO_UPGRADE_SLOT_LABELS,
+					Value = H.getAutoUpgradeTargetLabels(),
 					Multi = true,
 					AllowNone = true,
 					Callback = function(selected)
+						if S.suppressSettingsDropdownSync then
+							return
+						end
 						H.setAutoUpgradeTargets(selected)
 						if S.autoUpgradeRunning then
 							H.tryAutoUpgradeBurst()
@@ -7939,7 +9561,7 @@
 
 			UI.equipBestSwordToggleElement = EquipBestSection:Toggle({
 				Title = "Equip Best Sword",
-				Desc = "Best in main hand, 2nd best in offhand (needs dual wield)",
+				Desc = "Top 2 by stat; faster weapon (APS) goes main hand, slower offhand",
 				Value = false,
 				Callback = function(on)
 					if S.suppressEquipBestSwordSync then
@@ -8116,7 +9738,7 @@
 			UI.autoRebirthLevelInputElement = RebirthSection:Input({
 				Title = "Rebirth Level",
 				Desc = "Rebirth when you reach this level (min 100)",
-				Value = "100",
+				Value = tostring(S.autoRebirthTargetLevel),
 				Placeholder = "100",
 				Callback = function(text)
 					if S.suppressAutoRebirthLevelSync then
@@ -8199,10 +9821,13 @@
 					Title = "Boss Targets",
 					Desc = "Borock (Dungeon) and Demon King (Temple)",
 					Values = AUTO_BOSS_OPTION_LABELS,
-					Value = AUTO_BOSS_OPTION_LABELS,
+					Value = H.getAutoBossTargetLabels(),
 					Multi = true,
 					AllowNone = true,
 					Callback = function(selected)
+						if S.suppressSettingsDropdownSync then
+							return
+						end
 						H.setAutoBossTargets(selected)
 					end,
 				})
@@ -8293,6 +9918,48 @@
 
 			H.buildShellEggEventSection(EventTab, "Event Eggs")
 			H.buildBeachGoalsEventSection(EventTab, "Beach Soccer")
+			H.buildMineRaceEventSection(EventTab, "Shell Race")
+
+			local SettingsTab = OthersSection:Tab({
+				Title = "Settings",
+				Icon = "solar:settings-bold",
+			})
+
+			local SettingsSection = H.createStaticBoxSection(SettingsTab, "Settings", "solar:settings-bold")
+
+			local okMinimizeHotkey, minimizeHotkeyErr = pcall(function()
+				UI.minimizeHotkeyKeybindElement = SettingsSection:Keybind({
+					Title = "Minimize Hotkey",
+					Desc = "Show or hide Exon Hub (default: Left Alt)",
+					Value = H.getMinimizeHotkeyName(),
+					Callback = function(keyName)
+						if S.suppressSettingsDropdownSync then
+							return
+						end
+						H.setMinimizeHotkey(keyName, true)
+					end,
+				})
+			end)
+
+			if not okMinimizeHotkey then
+				warn("[ExonHub] Minimize hotkey keybind failed:", minimizeHotkeyErr)
+			end
+
+			UI.autoSaveSettingsToggleElement = SettingsSection:Toggle({
+				Title = "Auto Save Settings",
+				Desc = "Remembers your toggles and options for the next time you execute",
+				Value = S.autoSaveSettingsEnabled == true,
+				Callback = function(on)
+					if S.suppressAutoSaveSettingsSync then
+						return
+					end
+					if H.setAutoSaveSettings then
+						H.setAutoSaveSettings(on == true, true)
+					end
+				end,
+			})
+
+			H.finalizeStaticSection(SettingsSection)
 
 			if Window.SelectTab and FarmingTab.Index then
 				Window:SelectTab(FarmingTab.Index)
@@ -8696,6 +10363,7 @@
 			if not fromToggle then
 				H.syncFarmToggle(S.running)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setRunning = H.setRunningImpl
@@ -8722,6 +10390,7 @@
 			if not fromToggle then
 				H.syncClickerToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoClicker = H.setAutoClickerImpl
@@ -8745,6 +10414,7 @@
 			if not fromToggle then
 				H.syncAutoRebirthToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoRebirth = H.setAutoRebirthImpl
@@ -8768,6 +10438,7 @@
 			if not fromToggle then
 				H.syncAutoMassUpgradeToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoMassUpgrade = H.setAutoMassUpgradeImpl
@@ -8792,6 +10463,7 @@
 			if not fromToggle then
 				H.syncAutoUpgradeToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoUpgrade = H.setAutoUpgradeImpl
@@ -8815,6 +10487,7 @@
 			if not fromToggle then
 				H.syncAutoBossToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoBoss = H.setAutoBossImpl
@@ -8844,6 +10517,7 @@
 			if not fromToggle then
 				H.syncAutoGoalsToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoGoals = H.setAutoGoalsImpl
@@ -8871,9 +10545,58 @@
 			if not fromToggle then
 				H.syncAutoFishToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoFish = H.setAutoFishImpl
+
+		function H.setAutoMineRaceImpl(state, fromToggle)
+			if S.autoMineRaceRunning == state then
+				return
+			end
+
+			S.autoMineRaceRunning = state
+			if state then
+				print("[ExonHub] Auto mine race ON")
+				H.setStatus("Auto mine race ON")
+				H.startAutoMineRaceLoop()
+			else
+				H.stopAutoMineRaceLoop()
+				print("[ExonHub] Auto mine race OFF")
+				H.setStatus("Auto mine race OFF")
+			end
+
+			if not fromToggle then
+				H.syncAutoMineRaceToggle(state)
+			end
+			H.scheduleSettingsSave()
+		end
+
+		H.setAutoMineRace = H.setAutoMineRaceImpl
+
+		function H.setAutoQuestImpl(state, fromToggle)
+			if S.autoQuestRunning == state then
+				return
+			end
+
+			S.autoQuestRunning = state
+			if state then
+				print("[ExonHub] Auto quest ON")
+				H.setStatus("Auto quest ON")
+				H.startAutoQuestLoop()
+			else
+				H.stopAutoQuestLoop()
+				print("[ExonHub] Auto quest OFF")
+				H.setStatus("Auto quest OFF")
+			end
+
+			if not fromToggle then
+				H.syncAutoQuestToggle(state)
+			end
+			H.scheduleSettingsSave()
+		end
+
+		H.setAutoQuest = H.setAutoQuestImpl
 
 		function H.setAutoUpgradeRodImpl(state, fromToggle)
 			if S.autoUpgradeRodRunning == state then
@@ -8894,6 +10617,7 @@
 			if not fromToggle then
 				H.syncAutoUpgradeRodToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoUpgradeRod = H.setAutoUpgradeRodImpl
@@ -8918,6 +10642,7 @@
 			if not fromToggle then
 				H.syncAutoKillToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoKill = H.setAutoKillImpl
@@ -8941,6 +10666,7 @@
 			if not fromToggle then
 				H.syncAntiAfkToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAntiAfk = H.setAntiAfkImpl
@@ -8967,6 +10693,7 @@
 			if not fromToggle then
 				H.syncStreamerModeToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setStreamerMode = H.setStreamerModeImpl
@@ -8990,6 +10717,7 @@
 			if not fromToggle then
 				H.syncAutoSellChestToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoSellChest = H.setAutoSellChestImpl
@@ -9013,6 +10741,7 @@
 			if not fromToggle then
 				H.syncAutoOpenChestToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoOpenChest = H.setAutoOpenChestImpl
@@ -9032,6 +10761,7 @@
 			if not fromToggle then
 				H.syncCaveAutoOpenToggle(slotId, state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setCaveAutoOpenSlot = H.setCaveAutoOpenSlotImpl
@@ -9051,6 +10781,7 @@
 			if not fromToggle then
 				H.syncAutoOpenShellEggToggle(slotId, state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoOpenShellEggSlot = H.setAutoOpenShellEggSlotImpl
@@ -9075,6 +10806,7 @@
 			if not fromToggle then
 				H.syncEquipBestSwordToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setEquipBestSword = H.setEquipBestSwordImpl
@@ -9099,6 +10831,7 @@
 			if not fromToggle then
 				H.syncEquipBestSkinToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setEquipBestSkin = H.setEquipBestSkinImpl
@@ -9123,6 +10856,7 @@
 			if not fromToggle then
 				H.syncEquipBestPetToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setEquipBestPet = H.setEquipBestPetImpl
@@ -9147,6 +10881,7 @@
 			if not fromToggle then
 				H.syncEquipBestArtifactToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setEquipBestArtifact = H.setEquipBestArtifactImpl
@@ -9171,6 +10906,7 @@
 			if not fromToggle then
 				H.syncAutoEvolvePetsToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoEvolvePets = H.setAutoEvolvePetsImpl
@@ -9195,6 +10931,7 @@
 			if not fromToggle then
 				H.syncAutoEvolveArtifactsToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoEvolveArtifacts = H.setAutoEvolveArtifactsImpl
@@ -9219,6 +10956,7 @@
 			if not fromToggle then
 				H.syncAutoDeleteWeaponsToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoDeleteWeapons = H.setAutoDeleteWeaponsImpl
@@ -9243,17 +10981,51 @@
 			if not fromToggle then
 				H.syncAutoDeleteSkinsToggle(state)
 			end
+			H.scheduleSettingsSave()
 		end
 
 		H.setAutoDeleteSkins = H.setAutoDeleteSkinsImpl
 
+		function H.setAutoSaveSettingsImpl(state, fromToggle)
+			if S.autoSaveSettingsEnabled == state then
+				return
+			end
+
+			S.autoSaveSettingsEnabled = state
+			if state then
+				if not H.canFilesystemPersist() then
+					warn("[ExonHub] Auto save needs writefile/readfile support from your executor")
+				end
+				print("[ExonHub] Auto save settings ON")
+				H.setStatus("Auto save settings ON")
+				H.saveSettingsSnapshot(true)
+			else
+				print("[ExonHub] Auto save settings OFF")
+				H.setStatus("Auto save settings OFF")
+				H.saveSettingsSnapshot(true)
+			end
+
+			if not fromToggle then
+				H.syncAutoSaveSettingsToggle(state)
+			end
+		end
+
+		H.setAutoSaveSettings = H.setAutoSaveSettingsImpl
+
 		local ok, err = pcall(function()
 			H.initUsageTracking()
+			H.preparePendingSettingsRestore()
 			H.createUI()
 			print("[ExonHub] UI created")
 			H.sendDiscordExecuteLog()
 
-			H.setAntiAfk(true, false)
+			local restoredSettings = H.restoreSavedSettingsOnLoad()
+			if not restoredSettings then
+				H.setAntiAfk(true, false)
+				if S.autoSaveSettingsEnabled then
+					H.saveSettingsSnapshot(true)
+				end
+			end
 
 			H.setStatus("Loading...")
 			task.spawn(function()
