@@ -4,6 +4,30 @@
 
 				local Players = game:GetService("Players")
 
+				local EXONHUB_SESSION_KEY = "__ExonHubSession_v1"
+
+				do
+					local bag = _G[EXONHUB_SESSION_KEY]
+					if type(bag) == "table" and type(bag.connections) == "table" then
+						for _, conn in ipairs(bag.connections) do
+							pcall(function()
+								if conn and conn.Disconnect then
+									conn:Disconnect()
+								end
+							end)
+						end
+					end
+					_G[EXONHUB_SESSION_KEY] = { connections = {} }
+				end
+
+				local function trackExonHubConnection(conn)
+					local bag = _G[EXONHUB_SESSION_KEY]
+					if bag and conn then
+						table.insert(bag.connections, conn)
+					end
+					return conn
+				end
+
 				local function getLoadFn()
 					return loadstring or load
 				end
@@ -522,16 +546,61 @@
 					return text:sub(1, maxLen - 3) .. "..."
 				end
 
-				function H.startUiRotation(guiObject, speedDegreesPerSecond)
+				function H.disconnectUiRotation(which)
+					local key = which == "topbar" and "topbarIconRotationConn" or "minimizedIconRotationConn"
+					local conn = S[key]
+					if conn then
+						pcall(function()
+							conn:Disconnect()
+						end)
+						S[key] = nil
+					end
+				end
+
+				function H.startUiRotation(guiObject, speedDegreesPerSecond, ownerKey)
 					if not guiObject then
 						return nil
 					end
+
+					if ownerKey == "topbar" then
+						H.disconnectUiRotation("topbar")
+					elseif ownerKey == "minimized" then
+						H.disconnectUiRotation("minimized")
+					end
+
 					local speed = speedDegreesPerSecond or EXONHUB_ICON_ROTATION_SPEED
-					return RunService.Heartbeat:Connect(function(dt)
-						if guiObject.Parent then
+					local conn
+					conn = RunService.Heartbeat:Connect(function(dt)
+						local ok = pcall(function()
+							if not guiObject.Parent then
+								if conn then
+									pcall(function()
+										conn:Disconnect()
+									end)
+								end
+								return
+							end
 							guiObject.Rotation = (guiObject.Rotation + speed * dt) % 360
+						end)
+						if not ok and conn then
+							pcall(function()
+								conn:Disconnect()
+							end)
+							if ownerKey == "topbar" then
+								S.topbarIconRotationConn = nil
+							elseif ownerKey == "minimized" then
+								S.minimizedIconRotationConn = nil
+							end
 						end
 					end)
+
+					trackExonHubConnection(conn)
+					if ownerKey == "topbar" then
+						S.topbarIconRotationConn = conn
+					elseif ownerKey == "minimized" then
+						S.minimizedIconRotationConn = conn
+					end
+					return conn
 				end
 
 				function H.applyExonHubWindowIcon(window)
@@ -558,19 +627,7 @@
 							end
 
 							local iconHolder = topbarLeft:FindFirstChild("ExonHubIcon")
-							local imageLabel
-
-							if iconHolder then
-								imageLabel = iconHolder:FindFirstChildWhichIsA("ImageLabel", true)
-							else
-								for _, desc in ipairs(topbarLeft:GetDescendants()) do
-									if desc:IsA("ImageLabel") then
-										imageLabel = desc
-										iconHolder = desc.Parent
-										break
-									end
-								end
-							end
+							local imageLabel = iconHolder and iconHolder:FindFirstChildWhichIsA("ImageLabel", true)
 
 							if not iconHolder then
 								iconHolder = Instance.new("Frame")
@@ -596,9 +653,7 @@
 							imageLabel.ImageTransparency = 0
 							imageLabel.Visible = true
 
-							if not S.topbarIconRotationConn then
-								S.topbarIconRotationConn = H.startUiRotation(iconHolder, EXONHUB_ICON_ROTATION_SPEED)
-							end
+							H.startUiRotation(iconHolder, EXONHUB_ICON_ROTATION_SPEED, "topbar")
 
 							return
 						end
@@ -753,19 +808,22 @@
 							return
 						end
 						local baseTime = os.clock()
-						pulseConn = RunService.Heartbeat:Connect(function()
-							if not toggleVisible or not minimized.Parent then
+						pulseConn = trackExonHubConnection(RunService.Heartbeat:Connect(function()
+							local ok = pcall(function()
+								if not toggleVisible or not minimized.Parent then
+									stopPulse()
+									return
+								end
+								local elapsed = os.clock() - baseTime
+								pulseScale.Scale = 1 + math.sin(elapsed * 3.2) * EXONHUB_MINIMIZED_PULSE
+							end)
+							if not ok then
 								stopPulse()
-								return
 							end
-							local elapsed = os.clock() - baseTime
-							pulseScale.Scale = 1 + math.sin(elapsed * 3.2) * EXONHUB_MINIMIZED_PULSE
-						end)
+						end))
 					end
 
-					if not S.minimizedIconRotationConn then
-						S.minimizedIconRotationConn = H.startUiRotation(minimized, EXONHUB_ICON_ROTATION_SPEED)
-					end
+					H.startUiRotation(minimized, EXONHUB_ICON_ROTATION_SPEED, "minimized")
 
 					local function destroyMinimizedUi()
 						allowMinimized = false
@@ -10869,18 +10927,8 @@
 				end
 
 				function H.createUI()
-					if S.minimizedIconRotationConn then
-						pcall(function()
-							S.minimizedIconRotationConn:Disconnect()
-						end)
-						S.minimizedIconRotationConn = nil
-					end
-					if S.topbarIconRotationConn then
-						pcall(function()
-							S.topbarIconRotationConn:Disconnect()
-						end)
-						S.topbarIconRotationConn = nil
-					end
+					H.disconnectUiRotation("topbar")
+					H.disconnectUiRotation("minimized")
 					H.disconnectMinimizedDragConns()
 
 					if UI.window then
