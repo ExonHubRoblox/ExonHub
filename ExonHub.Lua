@@ -3,8 +3,53 @@
 				local ALLOWED_PLACE_ID = 12645083079 -- Giant Simulator REBORN
 
 				local Players = game:GetService("Players")
-				local VirtualUser = game:GetService("VirtualUser")
-				local VirtualInputManager = game:GetService("VirtualInputManager")
+
+				local function getLoadFn()
+					return loadstring or load
+				end
+
+				local function getHttpGetFn()
+					return game.HttpGet
+						or (syn and syn.request and function(url)
+							local res = syn.request({ Url = url, Method = "GET" })
+							return res and res.Body
+						end)
+						or (http and http.request and function(url)
+							local res = http.request({ Url = url, Method = "GET" })
+							return res and res.Body
+						end)
+						or (request and function(url)
+							local ok, res = pcall(request, { Url = url, Method = "GET" })
+							if ok and res then
+								return res.Body
+							end
+							return nil
+						end)
+				end
+
+				local function failStartup(message)
+					warn("[ExonHub] " .. message)
+					local lp = Players.LocalPlayer
+					if lp then
+						pcall(function()
+							lp:Kick("[ExonHub] " .. message)
+						end)
+					end
+					error(message, 0)
+				end
+				local function refService(serviceName)
+					local service = game:GetService(serviceName)
+					if typeof(cloneref) == "function" then
+						local ok, wrapped = pcall(cloneref, service)
+						if ok and wrapped then
+							return wrapped
+						end
+					end
+					return service
+				end
+				local VirtualUser = refService("VirtualUser")
+				local VirtualInputManager = refService("VirtualInputManager")
+				local UserInputService = game:GetService("UserInputService")
 				local TweenService = game:GetService("TweenService")
 				local RunService = game:GetService("RunService")
 				local CollectionService = game:GetService("CollectionService")
@@ -24,8 +69,15 @@
 
 				local playerGui = player:WaitForChild("PlayerGui", 30)
 				if not playerGui then
-					warn("[ExonHub] no PlayerGui")
-					return
+					failStartup("PlayerGui not found — rejoin the game and try again.")
+				end
+
+				if type(getLoadFn()) ~= "function" then
+					failStartup("Your executor is missing loadstring/load. Update executor or use Delta, Wave, Solara, etc.")
+				end
+
+				if type(getHttpGetFn()) ~= "function" and type(game.HttpGet) ~= "function" then
+					failStartup("Your executor cannot HttpGet. Enable HTTP or use a different executor.")
 				end
 
 				-- remove old UI from previous run (PlayerGui / gethui / CoreGui)
@@ -264,6 +316,7 @@
 					antiAfkIdledConnection = nil,
 					antiAfkLoopActive = false,
 					antiAfkSessionId = 0,
+					antiAfkPulseIndex = 0,
 					streamerModeRunning = false,
 					streamerModeLoopActive = false,
 					streamerModeCharacterConn = nil,
@@ -304,6 +357,7 @@
 				local EQUIP_BEST_INTERVAL = 2
 				local AUTO_EVOLVE_INTERVAL = 0.75
 				local AUTO_DELETE_INTERVAL = 2.5
+				local ANTI_AFK_BACKUP_INTERVAL = 30
 				local AUTO_UPGRADE_IDLE_WAIT = 0.01
 				local AUTO_UPGRADE_MAX_STEPS = 10000
 				local AUTO_UPGRADE_CATCHUP_GAP = 5
@@ -1717,7 +1771,13 @@
 					H.applyStoredToggle(toggles, "autoSellChest", H.setAutoSellChest)
 					H.applyStoredToggle(toggles, "autoOpenChest", H.setAutoOpenChest)
 					H.applyStoredToggle(toggles, "autoBoss", H.setAutoBoss)
-					H.applyStoredToggle(toggles, "antiAfk", H.setAntiAfk)
+					if H.setAntiAfk then
+						if toggles and toggles.antiAfk == false then
+							H.setAntiAfk(false, false)
+						else
+							H.setAntiAfk(true, false)
+						end
+					end
 					H.applyStoredToggle(toggles, "autoKill", H.setAutoKill)
 					H.applyStoredToggle(toggles, "streamerMode", H.setStreamerMode)
 					H.applyStoredToggle(toggles, "autoFish", H.setAutoFish)
@@ -3723,49 +3783,117 @@
 					end)
 				end
 
-				function H.nudgeAntiAfkInput()
+				function H.getAntiAfkClickPosition()
 					local cam = workspace.CurrentCamera
-					local camCf = cam and cam.CFrame or CFrame.new()
+					if cam then
+						local viewport = cam.ViewportSize
+						if viewport.X > 0 and viewport.Y > 0 then
+							return Vector2.new(viewport.X * 0.5, viewport.Y * 0.5)
+						end
+					end
 
+					local mouseLocation = UserInputService:GetMouseLocation()
+					if mouseLocation.X > 0 or mouseLocation.Y > 0 then
+						return mouseLocation
+					end
+
+					return Vector2.new(1, 1)
+				end
+
+				function H.getAntiAfkCameraCFrame()
+					local cam = workspace.CurrentCamera
+					return cam and cam.CFrame or CFrame.new()
+				end
+
+				function H.runAntiAfkVirtualUser(clickPos, camCf)
 					pcall(function()
-						VirtualUser:CaptureFocus()
+						if VirtualUser.CaptureFocus then
+							VirtualUser:CaptureFocus()
+						end
+					end)
+					pcall(function()
+						if VirtualUser.CaptureController then
+							VirtualUser:CaptureController()
+						end
 					end)
 
-					-- Classic idle-kick cancel (right mouse click)
-					local okClassic = pcall(function()
-						VirtualUser:ClickButton2(Vector2.new())
+					local okClick = pcall(function()
+						VirtualUser:ClickButton2(clickPos)
 					end)
-					if not okClassic then
+					if not okClick then
 						pcall(function()
-							VirtualUser:Button2Down(Vector2.new(0, 0), camCf)
-							task.wait(0.1)
-							VirtualUser:Button2Up(Vector2.new(0, 0), camCf)
+							VirtualUser:Button2Down(clickPos, camCf)
+							VirtualUser:Button2Up(clickPos, camCf)
 						end)
 					end
 
-					-- Extra movement-pulse fallbacks some executors respect more
 					pcall(function()
-						VirtualUser:Button1Down(Vector2.new(0, 0), camCf)
-						task.wait(0.05)
-						VirtualUser:Button1Up(Vector2.new(0, 0), camCf)
+						VirtualUser:Button1Down(clickPos, camCf)
+						VirtualUser:Button1Up(clickPos, camCf)
+					end)
+				end
+
+				function H.runAntiAfkVirtualInput(clickPos)
+					pcall(function()
+						VirtualInputManager:SendMouseMoveEvent(clickPos.X + 1, clickPos.Y, game)
+						VirtualInputManager:SendMouseMoveEvent(clickPos.X, clickPos.Y, game)
+					end)
+
+					pcall(function()
+						VirtualInputManager:SendMouseButtonEvent(clickPos.X, clickPos.Y, 1, true, game, 1)
+						VirtualInputManager:SendMouseButtonEvent(clickPos.X, clickPos.Y, 1, false, game, 1)
 					end)
 
 					pcall(function()
 						VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.LeftShift, false, game)
-						task.wait(0.05)
 						VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftShift, false, game)
 					end)
 				end
 
-				function H.enableAntiAfk()
-					if not S.antiAfkIdledConnection then
-						S.antiAfkIdledConnection = player.Idled:Connect(function()
-							if not S.antiAfkRunning then
-								return
-							end
-							H.nudgeAntiAfkInput()
-						end)
+				-- Fast path for Player.Idled (must finish immediately before kick)
+				function H.cancelIdleKickFast()
+					local clickPos = H.getAntiAfkClickPosition()
+					local camCf = H.getAntiAfkCameraCFrame()
+					H.runAntiAfkVirtualUser(clickPos, camCf)
+					H.runAntiAfkVirtualInput(clickPos)
+				end
+
+				-- Backup pulse rotates methods so at least one path works per executor
+				function H.nudgeAntiAfkInput()
+					local clickPos = H.getAntiAfkClickPosition()
+					local camCf = H.getAntiAfkCameraCFrame()
+					S.antiAfkPulseIndex = ((S.antiAfkPulseIndex or 0) % 3) + 1
+
+					if S.antiAfkPulseIndex == 1 then
+						H.runAntiAfkVirtualUser(clickPos, camCf)
+					elseif S.antiAfkPulseIndex == 2 then
+						H.runAntiAfkVirtualInput(clickPos)
+					else
+						H.runAntiAfkVirtualUser(clickPos, camCf)
+						H.runAntiAfkVirtualInput(clickPos)
 					end
+				end
+
+				function H.connectAntiAfkIdled()
+					if S.antiAfkIdledConnection then
+						pcall(function()
+							S.antiAfkIdledConnection:Disconnect()
+						end)
+						S.antiAfkIdledConnection = nil
+					end
+
+					S.antiAfkIdledConnection = player.Idled:Connect(function()
+						if not S.antiAfkRunning then
+							return
+						end
+						task.spawn(function()
+							pcall(H.cancelIdleKickFast)
+						end)
+					end)
+				end
+
+				function H.enableAntiAfk()
+					H.connectAntiAfkIdled()
 
 					if S.antiAfkLoopActive then
 						return
@@ -3776,10 +3904,10 @@
 					local sessionId = S.antiAfkSessionId
 
 					task.spawn(function()
-						-- Backup pulse so anti-AFK still works if Idled is delayed/suppressed.
+						-- Immediate pulse on enable, then periodic backup before the 20m kick timer.
 						while S.antiAfkRunning and sessionId == S.antiAfkSessionId do
-							H.nudgeAntiAfkInput()
-							task.wait(45)
+							pcall(H.nudgeAntiAfkInput)
+							task.wait(ANTI_AFK_BACKUP_INTERVAL)
 						end
 						if sessionId == S.antiAfkSessionId then
 							S.antiAfkLoopActive = false
@@ -10764,11 +10892,46 @@
 						UI.window = nil
 					end
 
-					local ok, WindUI = pcall(function()
-						return loadstring(game:HttpGet(
-							"https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
-						))()
-					end)
+					local WINDUI_URLS = {
+						"https://github.com/Footagesus/WindUI/releases/latest/download/main.lua",
+						"https://raw.githubusercontent.com/Footagesus/WindUI/main/main.lua",
+					}
+
+					local function loadWindUI()
+						local loadFn = getLoadFn()
+						if type(loadFn) ~= "function" then
+							return false, "loadstring/load missing"
+						end
+
+						local httpGet = getHttpGetFn()
+						local lastErr = "unknown"
+						for _, url in ipairs(WINDUI_URLS) do
+							local ok, result = pcall(function()
+								local source
+								if game.HttpGet then
+									source = game:HttpGet(url)
+								elseif httpGet then
+									source = httpGet(url)
+								end
+								if type(source) ~= "string" or source == "" then
+									error("empty WindUI response")
+								end
+								local compiled = loadFn(source)
+								if type(compiled) ~= "function" then
+									error("WindUI compile failed")
+								end
+								return compiled()
+							end)
+							if ok and result then
+								return true, result
+							end
+							lastErr = tostring(result)
+							warn("[ExonHub] WindUI URL failed:", url, lastErr)
+						end
+						return false, lastErr
+					end
+
+					local ok, WindUI = loadWindUI()
 					if not ok or not WindUI then
 						error("WindUI failed to load: " .. tostring(WindUI))
 					end
@@ -11218,7 +11381,7 @@
 
 					UI.antiAfkToggleElement = MiscSection:Toggle({
 						Title = "Anti AFK",
-						Desc = "Cancels Roblox idle kick + backup input every 45s",
+						Desc = "Blocks the 20m idle kick (Idled hook + 30s input backup)",
 						Value = true,
 						Callback = function(on)
 							if S.suppressAntiAfkSync then
