@@ -150,8 +150,8 @@
 				local ORB_COLLECT_PAUSE_MIN = 0.3
 				local ORB_COLLECT_PAUSE_MAX = 0.3
 				local MISC_TP_LOCATIONS = {
-					{ label = "Ground", position = Vector3.new(1303.301, 93.754, -71.574) },
-					{ label = "Cave", position = Vector3.new(2078.066, 208.596, -981.986) },
+					{ label = "Ground", position = Vector3.new(1303.301, 103.754, -71.574) },
+					{ label = "Cave", position = Vector3.new(2078.066, 218.596, -981.986) },
 					{ label = "Borock Boss", position = Vector3.new(15238.000, -10.113, -939.500) },
 					{ label = "Temple", position = Vector3.new(11463.500, -456.873, -1506.500) },
 					{ label = "Temple Crates", position = Vector3.new(11627.379, -399.517, -1326.282) },
@@ -219,6 +219,21 @@
 					autoFishPhaseConn = nil,
 					suppressAutoFishSync = false,
 					autoMineRaceRunning = false,
+					autoKothRunning = false,
+					autoKothLoopActive = false,
+					autoKothLastSwingAt = 0,
+					autoKothHoldConn = nil,
+					kothMovementBackup = nil,
+					autoGoalsKickBusy = false,
+					cachedKothFloorPart = nil,
+					kothSelfLevelCache = nil,
+					kothSelfListener = nil,
+					kothCharacterConn = nil,
+					kothRagdollListener = nil,
+					kothDefendBusy = false,
+					kothRecoverUntil = 0,
+					kothIdleSpinAngle = 0,
+					kothMeleeHitboxActive = false,
 					autoMineRaceLoopActive = false,
 					autoMineRaceSessionId = 0,
 					autoMineRaceTween = nil,
@@ -234,9 +249,21 @@
 					autoQuestEggHits = 0,
 					autoQuestLastKind = nil,
 					autoQuestLastTarget = nil,
+					autoQuestLastQuestKey = nil,
 					autoQuestEggAreaReady = false,
 					autoQuestWasAttackingBoss = false,
+					autoQuestBossFollowTween = nil,
+					autoQuestBossFollowConnection = nil,
+					autoQuestBossFollowDefId = nil,
+					autoQuestBossSwingActive = false,
+					autoQuestBossWaitTpDone = false,
+					autoQuestOrbGroundReady = false,
+					autoQuestDeleteRewards = false,
+					autoQuestEnabledFish = false,
+					autoQuestEnabledClicker = false,
+					orbGroundTeleported = false,
 					suppressAutoQuestSync = false,
+					suppressAutoQuestDeleteSync = false,
 					automationCharacterCollisionBackup = nil,
 					autoSaveSettingsEnabled = true,
 					minimizeHotkey = "LeftAlt",
@@ -252,7 +279,11 @@
 					autoGoalsScoredBalls = {},
 					autoGoalsBallSpawns = {},
 					autoGoalsLastKickBallName = nil,
+					autoGoalsLastKickGoalName = nil,
 					autoGoalsGoalListener = nil,
+					autoGoalsRawGoalListener = nil,
+					autoGoalsLastGoalConfirmAt = 0,
+					autoGoalsLastGoalConfirmBall = nil,
 					clickerHadAeroAuto = false,
 					silentTrainModeActive = false,
 				autoGoalsBallCollisionBackup = {},
@@ -304,6 +335,7 @@
 					suppressMaxOutToggleSync = false,
 					autoRebirthTargetLevel = 100,
 					lastRebirthAttemptAt = 0,
+					autoRebirthLevelConn = nil,
 					suppressToggleSync = false,
 					suppressClickerSync = false,
 					suppressAutoRebirthSync = false,
@@ -346,6 +378,7 @@
 					streamerModeCharacterConn = nil,
 					streamerModeBackup = nil,
 					cachedSafeZoneRegions = nil,
+					suppressAutoKothSync = false,
 					usageStats = nil,
 					usageLastCheckpoint = nil,
 					usageTrackingActive = false,
@@ -373,11 +406,14 @@
 					fishingRodsData = nil,
 				}
 				local MIN_REBIRTH_TARGET_LEVEL = 100
-				local TRAIN_INTERVAL = 0.52
+				local TRAIN_INTERVAL = 0.16
+				local TRAIN_BURST_SWINGS = 2
+				local TRAIN_BURST_GAP = 0.035
+				local TRAIN_REMOTE_SETTLE = 0.02
 				local MASS_UPGRADE_INTERVAL = 0.75
 				local AUTO_SELL_CHEST_INTERVAL = 0.75
-				local REBIRTH_POLL_INTERVAL = 1.5
-				local REBIRTH_ATTEMPT_COOLDOWN = 3
+				local REBIRTH_POLL_INTERVAL = 0.15
+				local REBIRTH_ATTEMPT_COOLDOWN = 0.2
 				local EQUIP_BEST_INTERVAL = 2
 				local AUTO_EVOLVE_INTERVAL = 0.75
 				local AUTO_DELETE_INTERVAL = 2.5
@@ -445,6 +481,26 @@
 				local AUTO_KILL_FOLLOW_MAX_SPEED = 450
 				local AUTO_KILL_GROUND_RADIUS = 48
 				local AUTO_KILL_GROUND_MAX_HEIGHT = 80
+				local AUTO_KOTH_POLL = 0.1
+				local AUTO_KOTH_SWING_INTERVAL = 0.5
+				local AUTO_KOTH_DEFEND_SWING_INTERVAL = 0.16
+				local AUTO_KOTH_CONTESTED_SWING_INTERVAL = 0.1
+				local AUTO_KOTH_BLITZ_SWINGS = 3
+				local AUTO_KOTH_MULTI_BLITZ_SWINGS = 2
+				local AUTO_KOTH_DEFEND_BEHIND_OFFSET = 5
+				local AUTO_KOTH_RECOVER_SECONDS = 4
+				local AUTO_KOTH_IDLE_SPIN_SPEED = 1080
+				local AUTO_KOTH_HILL_STAND_OFFSET = 4
+				local AUTO_KOTH_HILL_PADDING = 12
+				local AUTO_KOTH_KING_LEVEL = 2
+				local AUTO_KOTH_SNAP_DISTANCE = 8
+				local AUTO_KOTH_HOLD_LERP = 0.55
+				local KOTH_HITBOX_SCALE = 20
+				local KOTH_HITBOX_PADDING = 12
+				local KOTH_HITBOX_MIN_SIZE = 32
+				local KOTH_HITBOX_FORWARD_EXTEND = 70
+				local KOTH_HITBOX_RADIUS = 95
+				local KOTH_HITBOX_MAX_SIZE = 200
 				-- Snapshot of Workspace.Scene.Ground.GroundPart (hardcoded — part may not exist in live game)
 				local PVP_GROUND_CFRAME = CFrame.new(1303.301, 74.194, -71.574)
 				local PVP_GROUND_SIZE = Vector3.new(1330.600, 17.119, 2047.687)
@@ -475,6 +531,10 @@
 				local FISHING_ZONE_TAG = "FishingZone"
 				local FISHING_ZONE_Y_TOLERANCE = 6
 				local FISHING_PHASE_IDLE = 0
+				local FISHING_PHASE_CAST = 1
+				local FISHING_PHASE_WAITING = 2
+				local FISHING_PHASE_REELING = 3
+				local FISHING_PHASE_CATCH = 4
 				local AUTO_FISH_POLL = 0.35
 				local AUTO_FISH_CAST_TIMEOUT = 45
 				local AUTO_MINE_RACE_SPEED = 100
@@ -492,6 +552,31 @@
 				local AUTO_QUEST_EGG_TELEPORT = CFrame.new(1910.08, 204.22, -976.7)
 				local AUTO_QUEST_POLL = 0.05
 				local AUTO_QUEST_EGG_VISITED_TTL = 3
+				local QUEST_KEY_TO_KIND = {
+					orb_quest = "Orb",
+					egg_collection_quest = "Egg",
+					dungeon_boss_quest = "Boss",
+					temple_boss_quest = "Boss",
+					fishing_quest = "Fishing",
+					pet_hatch_quest = "PetHatch",
+					chest_quest = "Chest",
+					upgrade_quest = "Upgrade",
+					swing_quest = "Swing",
+				}
+				local QUEST_KEY_TO_TARGET = {
+					dungeon_boss_quest = "Borock",
+					temple_boss_quest = "DemonKing",
+				}
+				local NEWBIE_STAGE_KIND = {
+					swing = "Swing",
+					chest = "Chest",
+					orbs = "Orb",
+					upgrade = "Upgrade",
+					hatch = "PetHatch",
+					fish = "Fishing",
+					accept = "QuestAccept",
+					turnin = "QuestTurnIn",
+				}
 				local AUTO_UPGRADE_ROD_POLL = 1.5
 				local AUTO_UPGRADE_ROD_BUY_COOLDOWN = 1.3
 				local AUTO_GOALS_BALL_ORDER = { "Ball2", "Ball1", "Ball" }
@@ -1267,6 +1352,299 @@
 						and type(makefolder) == "function"
 				end
 
+				local EXONHUB_RESET_FOLDERS = { "ExonHub", "WindUI" }
+
+				function H.canFilesystemDelete()
+					return type(delfile) == "function" or type(delfolder) == "function"
+				end
+
+				function H.normalizeExecutorChildPath(parent, entry)
+					if type(entry) ~= "string" or entry == "" then
+						return nil
+					end
+					if string.find(entry, ":", 1, true) or string.sub(entry, 1, 1) == "/" then
+						return entry
+					end
+					if string.find(entry, "/", 1, true) then
+						return entry
+					end
+					parent = tostring(parent or "")
+					if parent == "" then
+						return entry
+					end
+					if string.sub(parent, -1) == "/" then
+						return parent .. entry
+					end
+					return parent .. "/" .. entry
+				end
+
+				function H.deleteExecutorPath(path)
+					if type(path) ~= "string" or path == "" then
+						return false
+					end
+					if not H.canFilesystemDelete() then
+						return false
+					end
+
+					local isDir = false
+					if type(isfolder) == "function" then
+						local ok, result = pcall(isfolder, path)
+						isDir = ok and result == true
+					end
+
+					if isDir then
+						if type(listfiles) == "function" then
+							local ok, entries = pcall(listfiles, path)
+							if ok and type(entries) == "table" then
+								for _, entry in ipairs(entries) do
+									local child = H.normalizeExecutorChildPath(path, entry)
+									if child then
+										H.deleteExecutorPath(child)
+									end
+								end
+							end
+						end
+						if type(delfolder) == "function" then
+							return pcall(delfolder, path)
+						end
+						return false
+					end
+
+					if type(isfile) == "function" and type(delfile) == "function" then
+						local ok, exists = pcall(isfile, path)
+						if ok and exists then
+							return pcall(delfile, path)
+						end
+					end
+
+					return false
+				end
+
+				function H.deleteExecutorResetFolders()
+					local removed = {}
+					local failed = {}
+
+					for _, folder in ipairs(EXONHUB_RESET_FOLDERS) do
+						local hadSomething = false
+						if type(isfolder) == "function" then
+							local ok, exists = pcall(isfolder, folder)
+							hadSomething = ok and exists == true
+						end
+						if not hadSomething and type(isfile) == "function" then
+							local ok, exists = pcall(isfile, folder)
+							hadSomething = ok and exists == true
+						end
+
+						if hadSomething then
+							if H.deleteExecutorPath(folder) then
+								table.insert(removed, folder)
+							else
+								table.insert(failed, folder)
+							end
+						end
+					end
+
+					return removed, failed
+				end
+
+				function H.destroyExonHubUiRoots()
+					local uiNames = {
+						"Exon",
+						"ExonHubUI",
+						"ExonHubFloatingToggle",
+						"ExonHubMinimizedClone",
+						"ExonHubMinimizedGui",
+						"ExonHubQtyPrompt",
+						"WindUI",
+						"ExonHub",
+						"ExonHubError",
+					}
+
+					local function destroyIn(parent)
+						if not parent then
+							return
+						end
+						for _, name in ipairs(uiNames) do
+							local inst = parent:FindFirstChild(name)
+							if inst then
+								pcall(function()
+									inst:Destroy()
+								end)
+							end
+						end
+					end
+
+					destroyIn(playerGui)
+					pcall(function()
+						if typeof(gethui) == "function" then
+							destroyIn(gethui())
+						end
+					end)
+					pcall(function()
+						destroyIn(game:GetService("CoreGui"))
+					end)
+				end
+
+				function H.stopAllExonHubActivity()
+					S.suppressSettingsPersist = true
+
+					local toggles = {
+						{ "setAutoClicker", false },
+						{ "setRunning", false },
+						{ "setAutoQuest", false },
+						{ "setMaxOut", false },
+						{ "setAutoUpgrade", false },
+						{ "setAutoRebirth", false },
+						{ "setAutoMassUpgrade", false },
+						{ "setAutoBoss", false },
+						{ "setAutoKill", false },
+						{ "setAutoFish", false },
+						{ "setAutoGoals", false },
+						{ "setAutoKoth", false },
+						{ "setAutoMineRace", false },
+						{ "setAutoSellChest", false },
+						{ "setAutoOpenChest", false },
+						{ "setAutoUpgradeRod", false },
+						{ "setAutoEvolvePets", false },
+						{ "setAutoEvolveArtifacts", false },
+						{ "setAutoDeleteWeapons", false },
+						{ "setAutoDeleteSkins", false },
+						{ "setAntiAfk", false },
+						{ "setStreamerMode", false },
+					}
+
+					for _, entry in ipairs(toggles) do
+						local fn = H[entry[1]]
+						if fn then
+							pcall(fn, entry[2], false)
+						end
+					end
+
+					H.disconnectUiRotation("topbar")
+					H.disconnectUiRotation("minimized")
+					H.disconnectMinimizedDragConns()
+					H.teardownFishingPhaseListener()
+					H.destroyExonHubQtyPrompt()
+				end
+
+				function H.performExonHubReset()
+					H.stopAllExonHubActivity()
+
+					local removed, failed = H.deleteExecutorResetFolders()
+					S.pendingSettingsRestore = nil
+					S.autoSaveSettingsEnabled = false
+
+					local bag = _G[EXONHUB_SESSION_KEY]
+					if type(bag) == "table" and type(bag.connections) == "table" then
+						for _, conn in ipairs(bag.connections) do
+							pcall(function()
+								if conn and conn.Disconnect then
+									conn:Disconnect()
+								end
+							end)
+						end
+						bag.connections = {}
+					end
+
+					local summary = "ExonHub has been reset."
+					if #removed > 0 then
+						summary = summary .. "\n\nRemoved: " .. table.concat(removed, ", ")
+					else
+						summary = summary .. "\n\nNo saved executor folders were found."
+					end
+					if #failed > 0 then
+						summary = summary .. "\n\nCould not delete: " .. table.concat(failed, ", ")
+					end
+					summary = summary .. "\n\nRe-execute the script to load fresh defaults."
+
+					print("[ExonHub] Reset complete")
+					H.setStatus("Reset complete — re-execute ExonHub")
+
+					local function finishResetUi()
+						H.destroyExonHubUiRoots()
+						if UI.window and UI.window.Destroy then
+							pcall(function()
+								UI.window:Destroy()
+							end)
+						end
+						UI.window = nil
+						UI.windUI = nil
+						UI.floatingToggle = nil
+						UI.floatingToggleGui = nil
+					end
+
+					if UI.window and UI.window.Dialog then
+						local okDialog = pcall(function()
+							UI.window:Dialog({
+								Title = "Reset Complete",
+								Icon = "solar:check-circle-bold",
+								Width = 380,
+								Content = summary,
+								Buttons = {
+									{
+										Title = "OK",
+										Variant = "Primary",
+										Callback = finishResetUi,
+									},
+								},
+							})
+						end)
+						if not okDialog then
+							finishResetUi()
+						end
+					else
+						warn("[ExonHub]", summary)
+						finishResetUi()
+					end
+				end
+
+				function H.promptResetExonHub()
+					if not UI.window or not UI.window.Dialog then
+						warn("[ExonHub] Reset requires WindUI Dialog")
+						return
+					end
+
+					if not H.canFilesystemDelete() then
+						pcall(function()
+							UI.window:Dialog({
+								Title = "Reset Unavailable",
+								Icon = "solar:shield-warning-bold",
+								Width = 360,
+								Content = "Your executor does not support deleting files (delfile/delfolder).\n\nCannot reset saved data.",
+								Buttons = {
+									{
+										Title = "OK",
+										Variant = "Primary",
+									},
+								},
+							})
+						end)
+						return
+					end
+
+					pcall(function()
+						UI.window:Dialog({
+							Title = "Reset ExonHub",
+							Icon = "solar:restart-bold",
+							Width = 390,
+							Content = "Delete ALL ExonHub and WindUI saved files from your executor?\n\nThis removes saved settings, configs, and keys. All toggles return to defaults.\n\nThis cannot be undone.",
+							Buttons = {
+								{
+									Title = "Cancel",
+									Variant = "Tertiary",
+								},
+								{
+									Title = "Reset Everything",
+									Variant = "Primary",
+									Callback = function()
+										task.defer(H.performExonHubReset)
+									end,
+								},
+							},
+						})
+					end)
+				end
+
 				function H.ensureSettingsDir()
 					if not H.canFilesystemPersist() then
 						return false
@@ -1642,6 +2020,7 @@
 							clicker = S.clickerRunning == true,
 							farm = S.running == true,
 							autoQuest = S.autoQuestRunning == true,
+							autoQuestDeleteRewards = S.autoQuestDeleteRewards == true,
 							autoUpgrade = S.autoUpgradeRunning == true,
 							equipBestSword = S.equipBestSwordRunning == true,
 							equipBestSkin = S.equipBestSkinRunning == true,
@@ -1660,6 +2039,7 @@
 							autoFish = S.autoFishRunning == true,
 							autoUpgradeRod = S.autoUpgradeRodRunning == true,
 							autoGoals = S.autoGoalsRunning == true,
+							autoKoth = S.autoKothRunning == true,
 							autoMineRace = S.autoMineRaceRunning == true,
 							maxOut = S.maxOutRunning == true,
 						},
@@ -1817,6 +2197,7 @@
 					H.applyStoredToggle(toggles, "clicker", H.setAutoClicker)
 					H.applyStoredToggle(toggles, "farm", H.setRunning)
 					H.applyStoredToggle(toggles, "autoQuest", H.setAutoQuest)
+					H.applyStoredToggle(toggles, "autoQuestDeleteRewards", H.setAutoQuestDeleteRewards)
 					H.applyStoredToggle(toggles, "autoUpgrade", H.setAutoUpgrade)
 					H.applyStoredToggle(toggles, "equipBestSword", H.setEquipBestSword)
 					H.applyStoredToggle(toggles, "equipBestSkin", H.setEquipBestSkin)
@@ -1841,6 +2222,7 @@
 					H.applyStoredToggle(toggles, "autoFish", H.setAutoFish)
 					H.applyStoredToggle(toggles, "autoUpgradeRod", H.setAutoUpgradeRod)
 					H.applyStoredToggle(toggles, "autoGoals", H.setAutoGoals)
+					H.applyStoredToggle(toggles, "autoKoth", H.setAutoKoth)
 					H.applyStoredToggle(toggles, "autoMineRace", H.setAutoMineRace)
 					H.applyStoredToggle(toggles, "maxOut", H.setMaxOut)
 
@@ -2200,6 +2582,17 @@
 					S.suppressAutoGoalsSync = false
 				end
 
+				function H.syncAutoKothToggle(state)
+					if S.suppressAutoKothSync or not UI.autoKothToggleElement or not UI.autoKothToggleElement.Set then
+						return
+					end
+					S.suppressAutoKothSync = true
+					pcall(function()
+						UI.autoKothToggleElement:Set(state)
+					end)
+					S.suppressAutoKothSync = false
+				end
+
 				function H.syncAutoFishToggle(state)
 					if S.suppressAutoFishSync or not UI.autoFishToggleElement or not UI.autoFishToggleElement.Set then
 						return
@@ -2244,6 +2637,17 @@
 					S.suppressAutoQuestSync = false
 				end
 
+				function H.syncAutoQuestDeleteToggle(state)
+					if S.suppressAutoQuestDeleteSync or not UI.autoQuestDeleteToggleElement or not UI.autoQuestDeleteToggleElement.Set then
+						return
+					end
+					S.suppressAutoQuestDeleteSync = true
+					pcall(function()
+						UI.autoQuestDeleteToggleElement:Set(state)
+					end)
+					S.suppressAutoQuestDeleteSync = false
+				end
+
 				function H.syncAutoSaveSettingsToggle(state)
 					if S.suppressAutoSaveSettingsSync or not UI.autoSaveSettingsToggleElement or not UI.autoSaveSettingsToggleElement.Set then
 						return
@@ -2255,8 +2659,40 @@
 					S.suppressAutoSaveSettingsSync = false
 				end
 
+				function H.setAutoGoalsKickBusy(busy)
+					S.autoGoalsKickBusy = busy == true
+				end
+
+				function H.isAutoGoalsKickBusy()
+					return S.autoGoalsKickBusy == true
+				end
+
+				function H.shouldAutoGoalsUseKothTouchPath()
+					return S.autoKothRunning == true and S.autoGoalsRunning == true and S.autoFishRunning ~= true
+				end
+
+				function H.faceCharacterTowardGoal(goalPart)
+					local root = H.getCharacterRoot()
+					local aim = H.getBeachGoalAimPosition(goalPart)
+					if not root or not aim then
+						return
+					end
+
+					local pos = root.Position
+					root.CFrame = CFrame.lookAt(pos, Vector3.new(aim.X, pos.Y, aim.Z))
+				end
+
+				function H.clampKothHitboxSize(size)
+					local maxSize = KOTH_HITBOX_MAX_SIZE
+					return Vector3.new(
+						math.clamp(size.X, KOTH_HITBOX_MIN_SIZE, maxSize),
+						math.clamp(size.Y, KOTH_HITBOX_MIN_SIZE, maxSize),
+						math.clamp(size.Z, KOTH_HITBOX_MIN_SIZE, maxSize)
+					)
+				end
+
 				function H.shouldAutoGoalsBringBallToPlayer()
-					return S.autoFishRunning == true and S.autoGoalsRunning == true
+					return S.autoGoalsRunning == true and S.autoFishRunning == true
 				end
 
 				function H.syncAutoKillToggle(state)
@@ -2670,6 +3106,215 @@
 						return nil, nil
 					end
 					return gameService:FindFirstChild("WeaponAttackStart"), gameService:FindFirstChild("WeaponAnimComplete")
+				end
+
+				function H.flushZapClient()
+					local zap = H.getZapClient()
+					if zap and zap.SendEvents then
+						pcall(zap.SendEvents)
+					end
+				end
+
+				function H.fireTrainClick()
+					local zap = H.getZapClient()
+					if not zap or not zap.TrainClick or not zap.TrainClick.Fire then
+						return false
+					end
+					local ok = pcall(function()
+						zap.TrainClick.Fire()
+					end)
+					H.flushZapClient()
+					return ok
+				end
+
+				function H.firePlayerTrain()
+					local gameService = H.getGameService()
+					local constants = H.getSharedConstants()
+					if gameService and constants and constants.RemoteEvents then
+						local remote = gameService[constants.RemoteEvents.PLAYER_TRAIN]
+						if remote and remote.Fire then
+							return pcall(function()
+								remote:Fire()
+							end)
+						end
+					end
+					return false
+				end
+
+				function H.withFishingActivationBypass(fn)
+					local fc = H.getFishingController()
+					if not fc then
+						return pcall(fn)
+					end
+
+					local originals = {}
+					local function patch(methodName, replacement)
+						if type(fc[methodName]) == "function" then
+							originals[methodName] = fc[methodName]
+							fc[methodName] = replacement
+						end
+					end
+
+					patch("HandleActivation", function()
+						return false
+					end)
+					patch("_inZone", function()
+						return false
+					end)
+					patch("IsInZone", function()
+						return false
+					end)
+
+					local results = table.pack(pcall(fn))
+
+					for methodName, original in pairs(originals) do
+						fc[methodName] = original
+					end
+
+					return table.unpack(results, 1, results.n)
+				end
+
+				function H.prepareSilentTrainWeapon(pc)
+					if not pc then
+						return false
+					end
+
+					H.ensureWeaponEquipped(pc)
+					pcall(function()
+						if pc.StartIdling and pc.IsIdlePlaying and not pc:IsIdlePlaying() then
+							pc:StartIdling()
+						end
+					end)
+					task.wait(0.02)
+					return pc.Weapon ~= nil
+				end
+
+				function H.getTrainSlashTrackName(pc)
+					if pc and pc.IsDualWielding and pc:IsDualWielding() then
+						return "DUAL_SLASH_1"
+					end
+					return "WPN_SLASH_1"
+				end
+
+				function H.fireTrainSwingViaController(pc)
+					if not pc then
+						return false
+					end
+
+					local trackName = H.getTrainSlashTrackName(pc)
+					local ok = false
+
+					pcall(function()
+						if pc.IsIdlePlaying and pc:IsIdlePlaying() and pc.OnWeaponActivated then
+							pc:OnWeaponActivated(true)
+							ok = true
+							return
+						end
+
+						H.fireTrainClick()
+						local mc = H.getMeleeController()
+						if mc and mc.OnSwingStart then
+							mc:OnSwingStart()
+						end
+
+						if pc.StartPrimaryAttack then
+							pc:StartPrimaryAttack()
+						end
+
+						if pc.AnimKeyframeReached then
+							pc:AnimKeyframeReached(trackName, "BeamStart")
+							task.wait(0.04)
+							pc:AnimKeyframeReached(trackName, "End")
+							ok = true
+							return
+						end
+
+						ok = H.fireTrainAttackStart()
+						task.wait(TRAIN_REMOTE_SETTLE)
+						ok = H.fireTrainAnimComplete() or ok
+
+						if mc and mc.OnSwingEnd then
+							mc:OnSwingEnd()
+						end
+					end)
+
+					return ok
+				end
+
+				function H.fireTrainViaInputSimulation(pc)
+					local vim = game:GetService("VirtualInputManager")
+					if not vim or not pc then
+						return false
+					end
+
+					local ok = false
+					H.withFishingActivationBypass(function()
+						H.prepareSilentTrainWeapon(pc)
+						ok = pcall(function()
+							vim:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+							task.wait(0.05)
+							vim:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+						end)
+					end)
+					return ok
+				end
+
+				function H.fireTrainAttackStart()
+					local gameService = H.getGameService()
+					local constants = H.getSharedConstants()
+					if gameService and constants and constants.RemoteEvents then
+						local remote = gameService[constants.RemoteEvents.WEAPON_ATTACK_START]
+						if remote and remote.Fire then
+							local ok = pcall(function()
+								remote:Fire()
+							end)
+							if ok then
+								return true
+							end
+						end
+					end
+
+					local attackStart = select(1, H.getTrainRemotes())
+					if not attackStart then
+						return false
+					end
+
+					return pcall(function()
+						if attackStart.Fire then
+							attackStart:Fire()
+						elseif attackStart.FireServer then
+							attackStart:FireServer()
+						end
+					end)
+				end
+
+				function H.fireTrainAnimComplete()
+					local gameService = H.getGameService()
+					local constants = H.getSharedConstants()
+					if gameService and constants and constants.RemoteEvents then
+						local remote = gameService[constants.RemoteEvents.WEAPON_ANIM_COMPLETE]
+						if remote and remote.Fire then
+							local ok = pcall(function()
+								remote:Fire()
+							end)
+							if ok then
+								return true
+							end
+						end
+					end
+
+					local animComplete = select(2, H.getTrainRemotes())
+					if not animComplete then
+						return false
+					end
+
+					return pcall(function()
+						if animComplete.Fire then
+							animComplete:Fire()
+						elseif animComplete.FireServer then
+							animComplete:FireServer()
+						end
+					end)
 				end
 
 				function H.getSharedConstants()
@@ -3377,6 +4022,148 @@
 					return true
 				end
 
+				function H.getQuestBossDef(targetKey)
+					if targetKey == "Borock" then
+						return AUTO_BOSS_DEFS.borock
+					elseif targetKey == "DemonKing" then
+						return AUTO_BOSS_DEFS.demon_king
+					end
+					return nil
+				end
+
+				function H.getQuestBossWaitTeleport(targetKey)
+					local label = targetKey == "Borock" and "Borock Boss" or (targetKey == "DemonKing" and "Demon King" or nil)
+					if not label then
+						return nil
+					end
+					for _, location in ipairs(MISC_TP_LOCATIONS) do
+						if location.label == label then
+							return CFrame.new(location.position)
+						end
+					end
+					return nil
+				end
+
+				function H.ensureQuestBossWaitPosition(targetKey)
+					if S.autoQuestBossWaitTpDone then
+						return
+					end
+					local waitCFrame = H.getQuestBossWaitTeleport(targetKey)
+					if waitCFrame then
+						H.teleportCharacterTo(waitCFrame)
+						S.autoQuestBossWaitTpDone = true
+					end
+				end
+
+				function H.cancelAutoQuestBossFollow()
+					if S.autoQuestBossFollowTween then
+						pcall(function()
+							S.autoQuestBossFollowTween:Cancel()
+						end)
+						S.autoQuestBossFollowTween = nil
+					end
+					if S.autoQuestBossFollowConnection then
+						pcall(function()
+							S.autoQuestBossFollowConnection:Disconnect()
+						end)
+						S.autoQuestBossFollowConnection = nil
+					end
+					S.autoQuestBossFollowDefId = nil
+				end
+
+				function H.tweenToFollowQuestBoss(bossRoot)
+					local playerRoot = H.getCharacterRoot()
+					if not playerRoot or not bossRoot or not bossRoot.Parent then
+						return false
+					end
+
+					local goal = H.getFollowCFrameNearBoss(bossRoot)
+					if not goal then
+						return false
+					end
+
+					playerRoot.AssemblyLinearVelocity = Vector3.zero
+					playerRoot.AssemblyAngularVelocity = Vector3.zero
+
+					local dist = (playerRoot.Position - goal.Position).Magnitude
+					if dist < 0.35 then
+						playerRoot.CFrame = goal
+						return true
+					end
+
+					if S.autoQuestBossFollowTween then
+						pcall(function()
+							S.autoQuestBossFollowTween:Cancel()
+						end)
+					end
+
+					local duration = math.clamp(dist / AUTO_KILL_FOLLOW_MAX_SPEED, 0.02, AUTO_KILL_FOLLOW_TWEEN_TIME)
+					S.autoQuestBossFollowTween = TweenService:Create(playerRoot, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
+						CFrame = goal,
+					})
+					S.autoQuestBossFollowTween:Play()
+					return true
+				end
+
+				function H.startQuestBossFollow(def)
+					H.cancelAutoQuestBossFollow()
+
+					if not H.teleportNearBoss(def) then
+						return false
+					end
+
+					local followDef = def
+					S.autoQuestBossFollowDefId = def.id
+					S.autoQuestBossFollowConnection = RunService.Heartbeat:Connect(function()
+						if not S.autoQuestRunning then
+							H.cancelAutoQuestBossFollow()
+							return
+						end
+
+						local model = H.getBossModel(followDef)
+						local bossRoot = model and (model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso"))
+						if not bossRoot or not H.isBossAlive(followDef) then
+							H.cancelAutoQuestBossFollow()
+							return
+						end
+
+						H.tweenToFollowQuestBoss(bossRoot)
+					end)
+
+					return true
+				end
+
+				function H.ensureQuestBossSwing(on)
+					if on then
+						local pc = H.getPlayerController() or H.waitForPlayerController(5)
+						if pc then
+							H.tryAeroAutoSwing(pc, true)
+							S.autoQuestBossSwingActive = pc.DoAutoClick == true
+						end
+						return
+					end
+
+					if S.autoQuestBossSwingActive then
+						H.tryAeroAutoSwing(H.getPlayerController(), false)
+						S.autoQuestBossSwingActive = false
+					end
+				end
+
+				function H.waitForQuestRespawn(timeout)
+					local deadline = os.clock() + (timeout or 25)
+					while os.clock() < deadline do
+						if not S.autoQuestRunning then
+							return false
+						end
+						local hum = H.getHumanoid()
+						if hum and hum.Health > 0 then
+							return true
+						end
+						task.wait(0.25)
+					end
+					return false
+				end
+
 				function H.ensureBossSwing(on)
 					if on then
 						local pc = H.getPlayerController() or H.waitForPlayerController(5)
@@ -3783,6 +4570,1167 @@
 				function H.getMeleeController()
 					local aero = H.getGlobal().Aero
 					return aero and aero.Controllers and aero.Controllers.MeleeController or nil
+				end
+
+				function H.getKothContestHitParts(character)
+					local parts = {}
+					if not character then
+						return parts
+					end
+
+					local hrp = character:FindFirstChild("HumanoidRootPart")
+					local torso = character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+					if hrp then
+						table.insert(parts, hrp)
+					end
+					if torso and torso ~= hrp then
+						table.insert(parts, torso)
+					end
+					return parts
+				end
+
+				function H.getOrderedKothContestPlayers()
+					local contestPlayers = H.getKothContestPlayers()
+					if #contestPlayers <= 1 then
+						return contestPlayers
+					end
+
+					local root = H.getCharacterRoot()
+					local look = root and root.CFrame.LookVector or Vector3.new(0, 0, -1)
+					local flatLook = Vector3.new(look.X, 0, look.Z)
+					if flatLook.Magnitude < 0.05 then
+						flatLook = Vector3.new(0, 0, -1)
+					else
+						flatLook = flatLook.Unit
+					end
+
+					local rootPos = root and root.Position or Vector3.zero
+					local scored = {}
+					for _, otherPlayer in ipairs(contestPlayers) do
+						local hrp = otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart")
+						if hrp then
+							local offset = hrp.Position - rootPos
+							local flatOffset = Vector3.new(offset.X, 0, offset.Z)
+							local dist = flatOffset.Magnitude
+							local behindScore = 0
+							if dist > 0.25 then
+								behindScore = flatOffset.Unit:Dot(-flatLook)
+							end
+							table.insert(scored, {
+								player = otherPlayer,
+								score = behindScore * 120 - dist,
+							})
+						end
+					end
+
+					table.sort(scored, function(a, b)
+						return a.score > b.score
+					end)
+
+					local ordered = {}
+					for _, entry in ipairs(scored) do
+						table.insert(ordered, entry.player)
+					end
+					return ordered
+				end
+
+				function H.isKothIdlePeaceful()
+					if not S.autoKothRunning or S.kothDefendBusy or H.isAutoGoalsKickBusy() or H.isKothRecovering() then
+						return false
+					end
+					if H.hasKothContestThreat() then
+						return false
+					end
+
+					local state = H.getKOTHState()
+					if not state or state.contested == true then
+						return false
+					end
+
+					local isKing = state.kingUserId == player.UserId
+					return isKing and H.isKothKingLevel(H.getKothSelfLevel())
+				end
+
+				function H.applyKothIdleSpin(root, hillCFrame, dt)
+					if not root or not hillCFrame then
+						return
+					end
+
+					local hum = H.getHumanoid()
+					if hum then
+						hum.AutoRotate = false
+					end
+
+					S.kothIdleSpinAngle = ((S.kothIdleSpinAngle or 0) + AUTO_KOTH_IDLE_SPIN_SPEED * dt) % 360
+					local pos = hillCFrame.Position
+					local angle = math.rad(S.kothIdleSpinAngle)
+					local look = Vector3.new(math.sin(angle), 0, math.cos(angle))
+					root.CFrame = CFrame.lookAt(pos, pos + look)
+					root.AssemblyLinearVelocity = Vector3.zero
+					root.AssemblyAngularVelocity = Vector3.zero
+				end
+
+				function H.getNearestKothContestPlayer()
+					return H.getPriorityKothContestPlayer()
+				end
+
+				function H.getPriorityKothContestPlayer()
+					local contestPlayers = H.getKothContestPlayers()
+					if #contestPlayers == 0 then
+						return nil
+					end
+
+					local root = H.getCharacterRoot()
+					if not root then
+						return contestPlayers[1]
+					end
+
+					local look = root.CFrame.LookVector
+					local flatLook = Vector3.new(look.X, 0, look.Z)
+					if flatLook.Magnitude < 0.05 then
+						flatLook = Vector3.new(0, 0, -1)
+					else
+						flatLook = flatLook.Unit
+					end
+
+					local bestPlayer = nil
+					local bestScore = -math.huge
+					for _, otherPlayer in ipairs(contestPlayers) do
+						local hrp = otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart")
+						if hrp then
+							local offset = hrp.Position - root.Position
+							local flatOffset = Vector3.new(offset.X, 0, offset.Z)
+							local dist = flatOffset.Magnitude
+							local behindScore = 0
+							if dist > 0.25 then
+								behindScore = flatOffset.Unit:Dot(-flatLook)
+							end
+							local score = behindScore * 120 - dist
+							if score > bestScore then
+								bestScore = score
+								bestPlayer = otherPlayer
+							end
+						end
+					end
+
+					return bestPlayer or contestPlayers[1]
+				end
+
+				function H.getKothBehindCFrame(targetRoot)
+					if not targetRoot then
+						return nil
+					end
+
+					local hillCFrame = H.getKothHillCFrame()
+					local hillY = hillCFrame and hillCFrame.Position.Y or targetRoot.Position.Y
+					local behind = targetRoot.CFrame * CFrame.new(0, 0, AUTO_KOTH_DEFEND_BEHIND_OFFSET)
+					local pos = behind.Position
+					pos = Vector3.new(pos.X, hillY, pos.Z)
+					local targetPos = targetRoot.Position
+					return CFrame.lookAt(pos, Vector3.new(targetPos.X, pos.Y, targetPos.Z))
+				end
+
+				function H.isKothRecovering()
+					return (S.kothRecoverUntil or 0) > os.clock()
+				end
+
+				function H.beginKothRecovery(duration, reason)
+					S.kothRecoverUntil = os.clock() + (duration or AUTO_KOTH_RECOVER_SECONDS)
+					if reason then
+						H.setStatus("Auto KOTH: recovering — " .. reason)
+					end
+				end
+
+				function H.recoverKothPresence(reason)
+					if not S.autoKothRunning then
+						return false
+					end
+
+					H.beginKothRecovery(AUTO_KOTH_RECOVER_SECONDS, reason or "reclaiming hill")
+
+					local hum = H.getHumanoid()
+					local root = H.getCharacterRoot()
+					if hum then
+						hum.PlatformStand = false
+						hum.Sit = false
+						hum.AutoRotate = true
+					end
+					if root then
+						root.Anchored = false
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+					end
+
+					H.applyKothMovementLock()
+					local hillCFrame = H.getKothHillCFrame()
+					if hillCFrame and root then
+						root.CFrame = hillCFrame
+						H.uprightCharacterRoot(root)
+					end
+
+					for _ = 1, 20 do
+						if not S.autoKothRunning then
+							break
+						end
+
+						root = H.getCharacterRoot()
+						hillCFrame = H.getKothHillCFrame()
+						if root and hillCFrame then
+							root.CFrame = hillCFrame
+							root.AssemblyLinearVelocity = Vector3.zero
+							root.AssemblyAngularVelocity = Vector3.zero
+							H.uprightCharacterRoot(root)
+						end
+
+						if H.isKothKingLevel(H.getKothSelfLevel()) then
+							S.kothRecoverUntil = 0
+							return true
+						end
+
+						task.wait(0.15)
+					end
+
+					return H.isKothKingLevel(H.getKothSelfLevel())
+				end
+
+				function H.tryRecoverKothIfNeeded()
+					if not S.autoKothRunning or H.isAutoGoalsKickBusy() or S.kothDefendBusy then
+						return false
+					end
+
+					local root = H.getCharacterRoot()
+					local hum = H.getHumanoid()
+					if not root or not hum or hum.Health <= 0 then
+						return false
+					end
+
+					if hum.PlatformStand or hum:GetState() == Enum.HumanoidStateType.Physics then
+						if not H.isKothRecovering() then
+							return H.recoverKothPresence("ragdoll")
+						end
+						return true
+					end
+
+					local state = H.getKOTHState()
+					local wasKing = state and state.kingUserId == player.UserId
+					local onHill = H.isPositionOnKothHill(root.Position, 10)
+					if (wasKing or H.isKothKingLevel(H.getKothSelfLevel())) and not onHill then
+						if not H.isKothRecovering() then
+							return H.recoverKothPresence("knocked off hill")
+						end
+						return true
+					end
+
+					return false
+				end
+
+				function H.ensureKothCharacterListener()
+					if S.kothCharacterConn then
+						return
+					end
+
+					S.kothCharacterConn = player.CharacterAdded:Connect(function()
+						if not S.autoKothRunning then
+							return
+						end
+
+						S.kothSelfLevelCache = 0
+						S.kothDefendBusy = false
+						task.wait(0.35)
+						H.stopKothSoftHold()
+						H.startKothSoftHold()
+						H.recoverKothPresence("respawn")
+					end)
+				end
+
+				function H.teardownKothCharacterListener()
+					if S.kothCharacterConn then
+						pcall(function()
+							S.kothCharacterConn:Disconnect()
+						end)
+						S.kothCharacterConn = nil
+					end
+				end
+
+				function H.ensureKothRagdollListener()
+					if S.kothRagdollListener then
+						return true
+					end
+
+					local aero = H.getGlobal().Aero
+					local constants = H.getSharedConstants()
+					if not aero or not aero.Services or not constants or not constants.RemoteEvents then
+						return false
+					end
+
+					local ragdollService = aero.Services.RagdollService
+					local eventName = constants.RemoteEvents.RAGDOLL_CHARACTER or "RagdollCharacter"
+					local ragdollRemote = ragdollService and ragdollService[eventName]
+					if not ragdollRemote or not ragdollRemote.Connect then
+						return false
+					end
+
+					S.kothRagdollListener = ragdollRemote:Connect(function(targetPlayer, enabled)
+						if targetPlayer ~= player or not S.autoKothRunning then
+							return
+						end
+
+						if enabled == true then
+							H.setStatus("Auto KOTH: ragdolled — recovering soon")
+							return
+						end
+
+						task.defer(function()
+							if S.autoKothRunning then
+								H.recoverKothPresence("flung")
+							end
+						end)
+					end)
+					return true
+				end
+
+				function H.teardownKothRagdollListener()
+					if S.kothRagdollListener then
+						pcall(function()
+							S.kothRagdollListener:Disconnect()
+						end)
+						S.kothRagdollListener = nil
+					end
+				end
+
+				function H.faceCharacterTowardPosition(worldPos)
+					local root = H.getCharacterRoot()
+					if not root or not worldPos then
+						return
+					end
+
+					local pos = root.Position
+					root.CFrame = CFrame.lookAt(pos, Vector3.new(worldPos.X, pos.Y, worldPos.Z))
+				end
+
+				function H.faceCharacterTowardContestPlayer(targetPlayer)
+					local character = targetPlayer and targetPlayer.Character
+					local hrp = character and character:FindFirstChild("HumanoidRootPart")
+					if hrp then
+						H.faceCharacterTowardPosition(hrp.Position)
+					end
+				end
+
+				function H.hasKothContestThreat()
+					if not S.autoKothRunning then
+						return false
+					end
+
+					local state = H.getKOTHState()
+					if state and state.contested == true then
+						return true
+					end
+
+					return #H.getKothContestPlayers() > 0
+				end
+
+				function H.ensureKothSelfListener()
+					if S.kothSelfListener then
+						return true
+					end
+
+					local kothService = H.getKOTHService()
+					local constants = H.getSharedConstants()
+					if not kothService or not constants or not constants.RemoteEvents then
+						return false
+					end
+
+					local selfRemote = kothService[constants.RemoteEvents.KOTH_SELF]
+					if not selfRemote or not selfRemote.Connect then
+						return false
+					end
+
+					S.kothSelfLevelCache = H.getKothSelfLevel()
+					S.kothSelfListener = selfRemote:Connect(function(level)
+						S.kothSelfLevelCache = level or 0
+					end)
+					return true
+				end
+
+				function H.teardownKothSelfListener()
+					if S.kothSelfListener then
+						pcall(function()
+							S.kothSelfListener:Disconnect()
+						end)
+						S.kothSelfListener = nil
+					end
+					S.kothSelfLevelCache = nil
+				end
+
+				function H.getKOTHService()
+					local aero = H.getGlobal().Aero
+					return aero and aero.Services and aero.Services.KOTHService or nil
+				end
+
+				function H.getKOTHController()
+					local aero = H.getGlobal().Aero
+					return aero and aero.Controllers and aero.Controllers.KOTHController or nil
+				end
+
+				function H.getKOTHState()
+					local controller = H.getKOTHController()
+					if controller and type(controller.State) == "table" then
+						local live = controller.State
+						return {
+							enabled = live.active ~= nil or live.kingUserId ~= nil or (controller.Level or 0) > 0,
+							kingName = live.kingName,
+							kingUserId = live.kingUserId,
+							multiplier = live.multiplier or 0,
+							contested = live.contested == true,
+							active = live.active == true,
+							level = controller.Level or 0,
+						}
+					end
+
+					local service = H.getKOTHService()
+					if not service then
+						return nil
+					end
+
+					local ok, state = pcall(function()
+						return service:GetState()
+					end)
+					if ok and type(state) == "table" then
+						state.level = state.level or H.getKothSelfLevel()
+						return state
+					end
+					return nil
+				end
+
+				function H.getKothSelfLevel()
+					local controller = H.getKOTHController()
+					if controller and type(controller.Level) == "number" and controller.Level > 0 then
+						return controller.Level
+					end
+
+					if type(S.kothSelfLevelCache) == "number" and S.kothSelfLevelCache > 0 then
+						return S.kothSelfLevelCache
+					end
+
+					local state = H.getKOTHState()
+					return state and state.level or 0
+				end
+
+				function H.isKothKingLevel(level)
+					return (level or H.getKothSelfLevel()) >= AUTO_KOTH_KING_LEVEL
+				end
+
+				function H.getKothFloorPart()
+					if S.cachedKothFloorPart and S.cachedKothFloorPart.Parent then
+						return S.cachedKothFloorPart
+					end
+
+					local part = H.getWorkspacePath({ "Scene", "Beach", "KingOfTheHillSandCastle", "Floor2" })
+					S.cachedKothFloorPart = part
+					return part
+				end
+
+				function H.getKothHillTopOffset(floor)
+					if not floor then
+						return 0
+					end
+
+					local cf = floor.CFrame
+					local size = floor.Size
+					return math.abs(cf.RightVector.Y) * size.X * 0.5
+						+ math.abs(cf.UpVector.Y) * size.Y * 0.5
+						+ math.abs(cf.LookVector.Y) * size.Z * 0.5
+				end
+
+				function H.getKothHillCFrame()
+					local floor = H.getKothFloorPart()
+					if not floor then
+						return nil
+					end
+
+					local topOffset = H.getKothHillTopOffset(floor) + AUTO_KOTH_HILL_STAND_OFFSET
+					local pos = floor.Position + Vector3.new(0, topOffset, 0)
+					local look = floor.CFrame.LookVector
+					local flatLook = Vector3.new(look.X, 0, look.Z)
+					if flatLook.Magnitude < 0.05 then
+						flatLook = Vector3.new(0, 0, -1)
+					else
+						flatLook = flatLook.Unit
+					end
+
+					return CFrame.lookAt(pos, pos + flatLook)
+				end
+
+				function H.isPositionOnKothHill(position, padding)
+					local floor = H.getKothFloorPart()
+					if not floor or not position then
+						return false
+					end
+
+					padding = padding or AUTO_KOTH_HILL_PADDING
+					local localPos = floor.CFrame:PointToObjectSpace(position)
+					local half = floor.Size * 0.5 + Vector3.new(padding, 24, padding)
+					return math.abs(localPos.X) <= half.X
+						and math.abs(localPos.Z) <= half.Z
+						and localPos.Y >= -half.Y
+						and localPos.Y <= half.Y + 28
+				end
+
+				function H.getKothContestPlayers()
+					local targets = {}
+					for _, otherPlayer in ipairs(Players:GetPlayers()) do
+						if otherPlayer ~= player and otherPlayer.Character then
+							local hum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
+							local hrp = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
+							if hum and hum.Health > 0 and hrp and H.isPositionOnKothHill(hrp.Position, 14) then
+								table.insert(targets, otherPlayer)
+							end
+						end
+					end
+					return targets
+				end
+
+				function H.backupKothMovement()
+					local hum = H.getHumanoid()
+					if not hum or S.kothMovementBackup then
+						return
+					end
+
+					S.kothMovementBackup = {
+						WalkSpeed = hum.WalkSpeed,
+						JumpPower = hum.JumpPower,
+						AutoRotate = hum.AutoRotate,
+					}
+				end
+
+				function H.applyKothMovementLock()
+					H.backupKothMovement()
+					local hum = H.getHumanoid()
+					if not hum then
+						return
+					end
+
+					hum.WalkSpeed = 0
+					hum.JumpPower = 0
+					hum.AutoRotate = true
+				end
+
+				function H.restoreKothMovement()
+					local hum = H.getHumanoid()
+					local backup = S.kothMovementBackup
+					if hum and backup then
+						hum.WalkSpeed = backup.WalkSpeed
+						hum.JumpPower = backup.JumpPower
+						hum.AutoRotate = backup.AutoRotate
+					end
+					S.kothMovementBackup = nil
+				end
+
+				function H.maintainKothHillDuringGoalKick()
+					local hillCFrame = H.getKothHillCFrame()
+					local root = H.getCharacterRoot()
+					if not hillCFrame or not root then
+						return false
+					end
+
+					local hillPos = hillCFrame.Position
+					local look = root.CFrame.LookVector
+					local flatLook = Vector3.new(look.X, 0, look.Z)
+					if flatLook.Magnitude < 0.05 then
+						flatLook = Vector3.new(hillCFrame.LookVector.X, 0, hillCFrame.LookVector.Z)
+					end
+					if flatLook.Magnitude < 0.05 then
+						flatLook = Vector3.new(0, 0, -1)
+					else
+						flatLook = flatLook.Unit
+					end
+
+					root.CFrame = CFrame.lookAt(hillPos, hillPos + flatLook)
+					root.AssemblyLinearVelocity = Vector3.zero
+					root.AssemblyAngularVelocity = Vector3.zero
+					return true
+				end
+
+				function H.maintainKothHillPosition(forceSnap)
+					if S.kothDefendBusy then
+						return true
+					end
+
+					if H.isAutoGoalsKickBusy() then
+						return H.maintainKothHillDuringGoalKick()
+					end
+
+					local hillCFrame = H.getKothHillCFrame()
+					local root = H.getCharacterRoot()
+					if not hillCFrame or not root then
+						return false
+					end
+
+					local dist = (root.Position - hillCFrame.Position).Magnitude
+					local selfLevel = H.getKothSelfLevel()
+					local state = H.getKOTHState()
+					local contested = state and state.contested == true
+					local contestPlayers = H.getKothContestPlayers()
+					local hasThreat = contested or #contestPlayers > 0
+					local onHill = H.isPositionOnKothHill(root.Position, 10)
+					local recovering = H.isKothRecovering()
+
+					if H.isKothIdlePeaceful() then
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+						if dist > 1.25 then
+							root.CFrame = root.CFrame:Lerp(hillCFrame, AUTO_KOTH_HOLD_LERP)
+						end
+						return true
+					end
+
+					if hasThreat and not onHill then
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+						return true
+					end
+
+					if recovering and not hasThreat then
+						root.CFrame = hillCFrame
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+						H.uprightCharacterRoot(root)
+						return true
+					end
+
+					if not onHill and not hasThreat then
+						root.CFrame = hillCFrame
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+						H.uprightCharacterRoot(root)
+						return true
+					end
+
+					if hasThreat then
+						local hum = H.getHumanoid()
+						if hum then
+							hum.AutoRotate = true
+						end
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+						local target = H.getPriorityKothContestPlayer()
+						if target then
+							H.faceCharacterTowardContestPlayer(target)
+						end
+						return true
+					end
+
+					if not H.isKothKingLevel(selfLevel) or dist > AUTO_KOTH_SNAP_DISTANCE then
+						root.CFrame = hillCFrame
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+						H.uprightCharacterRoot(root)
+						return true
+					end
+
+					root.AssemblyLinearVelocity = Vector3.zero
+					root.AssemblyAngularVelocity = Vector3.zero
+					if dist > 1.25 then
+						root.CFrame = root.CFrame:Lerp(hillCFrame, AUTO_KOTH_HOLD_LERP)
+					end
+
+					return true
+				end
+
+				function H.stopKothSoftHold()
+					if S.autoKothHoldConn then
+						pcall(function()
+							S.autoKothHoldConn:Disconnect()
+						end)
+						S.autoKothHoldConn = nil
+					end
+					H.restoreKothMovement()
+				end
+
+				function H.startKothSoftHold()
+					if S.autoKothHoldConn then
+						return
+					end
+
+					H.applyKothMovementLock()
+					S.autoKothHoldConn = trackExonHubConnection(RunService.Heartbeat:Connect(function(dt)
+						if not S.autoKothRunning then
+							H.stopKothSoftHold()
+							return
+						end
+						if H.isAutoGoalsKickBusy() then
+							H.maintainKothHillDuringGoalKick()
+							return
+						end
+						if S.kothDefendBusy then
+							local root = H.getCharacterRoot()
+							if root then
+								root.AssemblyLinearVelocity = Vector3.zero
+								root.AssemblyAngularVelocity = Vector3.zero
+							end
+							if S.kothDefendBusy then
+								local target = H.getPriorityKothContestPlayer()
+								if target then
+									H.faceCharacterTowardContestPlayer(target)
+								end
+							end
+							return
+						end
+
+						local hum = H.getHumanoid()
+						if not hum or hum.Health <= 0 then
+							return
+						end
+
+						H.maintainKothHillPosition(false)
+
+						if H.isKothIdlePeaceful() then
+							local root = H.getCharacterRoot()
+							local hillCFrame = H.getKothHillCFrame()
+							if root and hillCFrame then
+								H.applyKothIdleSpin(root, hillCFrame, dt)
+							end
+						end
+					end))
+				end
+
+				function H.getMeleeHitboxModule()
+					if C.meleeHitboxModule then
+						return C.meleeHitboxModule
+					end
+
+					local aeroFolder = ReplicatedStorage:FindFirstChild("Aero")
+					local sharedFolder = aeroFolder and aeroFolder:FindFirstChild("Shared")
+					local hitboxScript = sharedFolder and sharedFolder:FindFirstChild("MeleeHitbox")
+					if not hitboxScript then
+						return nil
+					end
+
+					local ok, mod = pcall(require, hitboxScript)
+					if ok and mod then
+						C.meleeHitboxModule = mod
+						return mod
+					end
+					return nil
+				end
+
+				function H.fireKothContestMeleeHits(mc)
+					if not S.autoKothRunning then
+						return
+					end
+
+					local root = H.getCharacterRoot()
+					local origin = root and root.Position
+					if not origin then
+						return
+					end
+
+					local hitThisSwing = mc and mc.HitThisSwing or nil
+
+					local function tryHitContestPlayer(targetPlayer, hitPart)
+						if not hitPart or not hitPart.Parent then
+							return
+						end
+						if hitThisSwing and hitThisSwing[targetPlayer] then
+							return
+						end
+						if not H.isPositionOnKothHill(hitPart.Position, 16) then
+							return
+						end
+						if (hitPart.Position - origin).Magnitude > KOTH_HITBOX_RADIUS then
+							return
+						end
+						if hitThisSwing then
+							hitThisSwing[targetPlayer] = true
+						end
+						H.fireMeleeHitOnPart(hitPart)
+					end
+
+					for _, otherPlayer in H.getKothContestPlayers() do
+						local character = otherPlayer.Character
+						if character then
+							for _, hitPart in ipairs(H.getKothContestHitParts(character)) do
+								tryHitContestPlayer(otherPlayer, hitPart)
+							end
+						end
+					end
+				end
+
+				function H.teardownKothMeleeHitboxBoost()
+					local hitbox = C.meleeHitboxModule
+					if hitbox then
+						if hitbox.__exonHubComputeWeaponBox then
+							hitbox.ComputeWeaponBox = hitbox.__exonHubComputeWeaponBox
+							hitbox.__exonHubComputeWeaponBox = nil
+						end
+						if hitbox.__exonHubWeaponReach then
+							hitbox.WeaponReach = hitbox.__exonHubWeaponReach
+							hitbox.__exonHubWeaponReach = nil
+						end
+						hitbox.HITBOX_PADDING = 1.3
+						hitbox.HITBOX_MIN_SIZE = 2
+					end
+
+					local mc = H.getMeleeController()
+					if mc and mc.__exonHubKothHeartbeatPatched and mc.__exonHubOriginalHeartbeat then
+						mc.OnHeartbeat = mc.__exonHubOriginalHeartbeat
+						mc.__exonHubKothHeartbeatPatched = nil
+						mc.__exonHubOriginalHeartbeat = nil
+					end
+
+					S.kothMeleeHitboxActive = false
+				end
+
+				function H.ensureKothMeleeHitboxBoost()
+					if S.kothMeleeHitboxActive then
+						return true
+					end
+
+					local hitbox = H.getMeleeHitboxModule()
+					if not hitbox then
+						return false
+					end
+
+					hitbox.HITBOX_PADDING = KOTH_HITBOX_PADDING
+					hitbox.HITBOX_MIN_SIZE = KOTH_HITBOX_MIN_SIZE
+
+					if not hitbox.__exonHubComputeWeaponBox then
+						hitbox.__exonHubComputeWeaponBox = hitbox.ComputeWeaponBox
+						hitbox.ComputeWeaponBox = function(weaponRef)
+							local cf, size = hitbox.__exonHubComputeWeaponBox(weaponRef)
+							local charRoot = H.getCharacterRoot()
+							if not cf and charRoot then
+								cf = charRoot.CFrame
+								size = Vector3.new(KOTH_HITBOX_MIN_SIZE, KOTH_HITBOX_MIN_SIZE, KOTH_HITBOX_MIN_SIZE)
+							end
+							if not cf then
+								return nil
+							end
+
+							size = Vector3.new(
+								math.max(size.X * KOTH_HITBOX_SCALE, KOTH_HITBOX_MIN_SIZE),
+								math.max(size.Y * KOTH_HITBOX_SCALE, KOTH_HITBOX_MIN_SIZE),
+								math.max(size.Z * KOTH_HITBOX_SCALE, KOTH_HITBOX_MIN_SIZE)
+							)
+							size = H.clampKothHitboxSize(size)
+							local forwardExtend = math.min(KOTH_HITBOX_FORWARD_EXTEND, 80)
+							cf = cf * CFrame.new(0, 0, -forwardExtend * 0.5)
+							size = H.clampKothHitboxSize(size + Vector3.new(0, 0, forwardExtend))
+							return cf, size
+						end
+					end
+
+					if not hitbox.__exonHubWeaponReach then
+						hitbox.__exonHubWeaponReach = hitbox.WeaponReach
+						hitbox.WeaponReach = function(weaponRef, targetPos)
+							local reach = hitbox.__exonHubWeaponReach(weaponRef, targetPos)
+							if reach then
+								return math.max(reach * KOTH_HITBOX_SCALE, KOTH_HITBOX_RADIUS)
+							end
+							return KOTH_HITBOX_RADIUS
+						end
+					end
+
+					local mc = H.getMeleeController()
+					if mc and not mc.__exonHubKothHeartbeatPatched then
+						mc.__exonHubKothHeartbeatPatched = true
+						mc.__exonHubOriginalHeartbeat = mc.OnHeartbeat
+						local originalHeartbeat = mc.OnHeartbeat
+						mc.OnHeartbeat = function(self, ...)
+							originalHeartbeat(self, ...)
+							if S.autoKothRunning and not H.isAutoGoalsKickBusy() and self.Swinging then
+								if H.hasKothContestThreat() then
+									H.fireKothContestMeleeHits(self)
+								end
+							end
+						end
+					end
+
+					S.kothMeleeHitboxActive = true
+					return true
+				end
+
+				function H.kothDefendSwingAt(targetPlayer)
+					if not S.autoKothRunning then
+						return false
+					end
+
+					local targets = {}
+					if targetPlayer then
+						table.insert(targets, targetPlayer)
+					else
+						targets = H.getKothContestPlayers()
+					end
+					if #targets == 0 then
+						return false
+					end
+
+					H.ensureKothMeleeHitboxBoost()
+					if targetPlayer then
+						H.faceCharacterTowardContestPlayer(targetPlayer)
+					else
+						local priority = H.getPriorityKothContestPlayer()
+						if priority then
+							H.faceCharacterTowardContestPlayer(priority)
+						end
+					end
+
+					local pc = H.getPlayerController()
+					local mc = H.getMeleeController()
+					H.ensureWeaponEquipped(pc)
+
+					if mc and mc.OnSwingStart then
+						pcall(function()
+							mc:OnSwingStart()
+						end)
+					end
+
+					for _, otherPlayer in ipairs(targets) do
+						local character = otherPlayer.Character
+						if character then
+							for _, hitPart in ipairs(H.getKothContestHitParts(character)) do
+								H.fireMeleeHitOnPart(hitPart)
+							end
+						end
+					end
+
+					pcall(function()
+						if pc and pc.OnWeaponActivated then
+							pc:OnWeaponActivated(true)
+						else
+							H.backgroundTrainSwing()
+						end
+					end)
+
+					if mc and mc.OnSwingEnd then
+						pcall(function()
+							mc:OnSwingEnd()
+						end)
+					end
+
+					return true
+				end
+
+				function H.kothBlitzDefend(targetPlayer, returnToCenter, swingCount)
+					if not S.autoKothRunning then
+						return false
+					end
+
+					if not S.kothDefendBusy then
+						S.kothDefendBusy = true
+					end
+
+					targetPlayer = targetPlayer or H.getPriorityKothContestPlayer()
+					if not targetPlayer then
+						if returnToCenter ~= false then
+							S.kothDefendBusy = false
+						end
+						return false
+					end
+
+					local targetRoot = targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+					local root = H.getCharacterRoot()
+					local hillCFrame = H.getKothHillCFrame()
+					if not targetRoot or not root or not hillCFrame then
+						if returnToCenter ~= false then
+							S.kothDefendBusy = false
+						end
+						return false
+					end
+
+					H.setStatus("Auto KOTH: blitz " .. targetPlayer.Name)
+
+					local behindCFrame = H.getKothBehindCFrame(targetRoot)
+					if behindCFrame and H.isPositionOnKothHill(behindCFrame.Position, 18) then
+						root.CFrame = behindCFrame
+					else
+						H.faceCharacterTowardContestPlayer(targetPlayer)
+					end
+					root.AssemblyLinearVelocity = Vector3.zero
+					root.AssemblyAngularVelocity = Vector3.zero
+
+					local swings = swingCount or AUTO_KOTH_BLITZ_SWINGS
+					for _ = 1, swings do
+						if not S.autoKothRunning then
+							break
+						end
+						H.kothDefendSwingAt(targetPlayer)
+						task.wait(0.05)
+					end
+
+					if returnToCenter ~= false then
+						root.CFrame = hillCFrame
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+						H.uprightCharacterRoot(root)
+						S.kothDefendBusy = false
+						S.autoKothLastSwingAt = os.clock()
+					end
+					return true
+				end
+
+				function H.kothClearHillContestants()
+					if not S.autoKothRunning or S.kothDefendBusy then
+						return false
+					end
+
+					local ordered = H.getOrderedKothContestPlayers()
+					if #ordered == 0 then
+						return false
+					end
+
+					S.kothDefendBusy = true
+					H.setStatus("Auto KOTH: clearing " .. #ordered .. " from hill")
+
+					for _, targetPlayer in ipairs(ordered) do
+						if not S.autoKothRunning then
+							break
+						end
+
+						local hrp = targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+						if hrp and H.isPositionOnKothHill(hrp.Position, 14) then
+							H.kothBlitzDefend(targetPlayer, false, AUTO_KOTH_MULTI_BLITZ_SWINGS)
+							task.wait(0.04)
+						end
+					end
+
+					local hillCFrame = H.getKothHillCFrame()
+					local root = H.getCharacterRoot()
+					if hillCFrame and root then
+						root.CFrame = hillCFrame
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+						H.uprightCharacterRoot(root)
+					end
+
+					S.kothDefendBusy = false
+					S.autoKothLastSwingAt = os.clock()
+					return true
+				end
+
+				function H.kothDefendSwing()
+					local contestPlayers = H.getKothContestPlayers()
+					if #contestPlayers > 1 then
+						return H.kothClearHillContestants()
+					end
+					return H.kothBlitzDefend(H.getPriorityKothContestPlayer())
+				end
+
+				function H.getKothDefendSwingInterval(contested, contestCount)
+					if contested then
+						return AUTO_KOTH_CONTESTED_SWING_INTERVAL
+					end
+					if contestCount > 0 then
+						return AUTO_KOTH_DEFEND_SWING_INTERVAL
+					end
+					return AUTO_KOTH_SWING_INTERVAL
+				end
+
+				function H.runAutoKothCycle()
+					H.startKothSoftHold()
+					H.ensureKothSelfListener()
+					H.ensureKothCharacterListener()
+					H.ensureKothRagdollListener()
+
+					while S.autoKothRunning do
+						local hum = H.getHumanoid()
+						if not hum or hum.Health <= 0 then
+							H.setStatus("Auto KOTH: waiting for respawn")
+							task.wait(0.5)
+							continue
+						end
+
+						H.tryRecoverKothIfNeeded()
+
+						local state = H.getKOTHState()
+						if not state or state.enabled == false then
+							H.setStatus("Auto KOTH: event not active")
+							task.wait(2)
+							continue
+						end
+
+						if state.active ~= true then
+							H.setStatus("Auto KOTH: need 2+ players online")
+							task.wait(2)
+							continue
+						end
+
+						if not H.maintainKothHillPosition(false) then
+							H.setStatus("Auto KOTH: hill not found")
+							task.wait(2)
+							continue
+						end
+
+						H.ensureKothMeleeHitboxBoost()
+
+						local selfLevel = H.getKothSelfLevel()
+						local isKing = state.kingUserId == player.UserId
+						local contested = state.contested == true
+						local contestPlayers = H.getKothContestPlayers()
+
+						if H.isKothRecovering() then
+							H.setStatus("Auto KOTH: reclaiming hill (KOTHSelf sync)")
+						elseif #contestPlayers > 0 and not H.isAutoGoalsKickBusy() then
+							local swingInterval = H.getKothDefendSwingInterval(contested, #contestPlayers)
+							if os.clock() - (S.autoKothLastSwingAt or 0) >= swingInterval then
+								if not H.isKothKingLevel(selfLevel) then
+									H.setStatus("Auto KOTH: clearing hill before claim")
+								elseif #contestPlayers > 1 then
+									H.setStatus("Auto KOTH: clearing " .. #contestPlayers .. " contesters")
+								else
+									H.setStatus("Auto KOTH: contested — blitz defend")
+								end
+								H.kothDefendSwing()
+								S.autoKothLastSwingAt = os.clock()
+							end
+						elseif contested and not H.isAutoGoalsKickBusy() then
+							H.setStatus("Auto KOTH: contested — watching hill")
+						elseif not H.isKothKingLevel(selfLevel) then
+							H.setStatus("Auto KOTH: waiting for KOTHSelf level 2")
+						elseif isKing and not contested and #contestPlayers == 0 then
+							if H.isAutoGoalsKickBusy() then
+								H.setStatus("Auto KOTH: KING — scoring goal")
+							else
+								H.setStatus(
+									("Auto KOTH: KING x%d — %d shells / 5s"):format(
+										state.multiplier or 0,
+										(state.multiplier or 0) * 5
+									)
+								)
+							end
+						elseif not state.kingUserId then
+							H.setStatus("Auto KOTH: claiming crown (alone on hill)")
+						else
+							H.setStatus("Auto KOTH: holding Floor2")
+						end
+
+						task.wait(AUTO_KOTH_POLL)
+					end
+				end
+
+				function H.stopAutoKothLoop()
+					S.autoKothRunning = false
+					S.autoKothLastSwingAt = 0
+					S.kothDefendBusy = false
+					S.kothRecoverUntil = 0
+					S.kothIdleSpinAngle = 0
+					H.stopKothSoftHold()
+					H.teardownKothSelfListener()
+					H.teardownKothCharacterListener()
+					H.teardownKothRagdollListener()
+					H.teardownKothMeleeHitboxBoost()
+				end
+
+				function H.startAutoKothLoop()
+					if S.autoKothLoopActive then
+						return
+					end
+					S.autoKothLoopActive = true
+
+					task.spawn(function()
+						H.runAutoKothCycle()
+						S.autoKothLoopActive = false
+					end)
 				end
 
 				function H.runAutoKillCycle()
@@ -4869,6 +6817,7 @@
 					local ok = pcall(function()
 						zap.SoccerKick.Fire(ballId)
 					end)
+					H.flushZapClient()
 					return ok
 				end
 
@@ -4894,7 +6843,21 @@
 					return delta.Unit
 				end
 
-				function H.applyBeachBallKickVelocity(ball, goalPart)
+				function H.getKothKickSpeedMultiplier(ball, goalPart)
+					local aim = H.getBeachGoalAimPositionForBall(ball, goalPart)
+					if not aim or not ball then
+						return 1.35
+					end
+
+					local dist = H.horizontalDistance(ball.Position, aim)
+					if dist <= 150 then
+						return 1.2
+					end
+
+					return math.clamp(1.2 + (dist - 150) / 250, 1.2, 1.65)
+				end
+
+				function H.applyBeachBallKickVelocity(ball, goalPart, speedMultiplier)
 					local primary = H.getBeachBallPrimaryPart(ball)
 					if not primary or not primary.Parent then
 						return false
@@ -4902,8 +6865,9 @@
 
 					local kickSpeed, kickLift = H.getSoccerKickValues()
 					local direction = H.getKickDirectionTowardGoal(ball, goalPart)
+					local speedScale = speedMultiplier or 1
 					primary.AssemblyAngularVelocity = Vector3.zero
-					primary.AssemblyLinearVelocity = direction * kickSpeed + Vector3.new(0, kickLift, 0)
+					primary.AssemblyLinearVelocity = direction * kickSpeed * speedScale + Vector3.new(0, kickLift, 0)
 					return true
 				end
 
@@ -4921,8 +6885,10 @@
 						if useSilentTrain then
 							H.ensureWeaponEquipped(pc)
 						end
-						sc:OnLocalSwing()
-						swung = true
+						H.withFishingActivationBypass(function()
+							sc:OnLocalSwing()
+							swung = true
+						end)
 					end)
 
 					if useSilentTrain then
@@ -4942,12 +6908,23 @@
 						return false
 					end
 
+					local useKothPath = H.shouldAutoGoalsUseKothTouchPath()
+					if useKothPath then
+						H.faceCharacterTowardGoal(goalPart)
+						task.wait(0.05)
+					end
+
 					H.restoreSingleBeachBallCollision(ball)
 					H.zeroBeachBallVelocity(ball)
 					H.fireTouchPair(H.getCharacterTouchPart(), primary)
 
 					H.trySoccerSwingKick()
-					H.applyBeachBallKickVelocity(ball, goalPart)
+
+					if useKothPath then
+						H.applyBeachBallKickVelocity(ball, goalPart, H.getKothKickSpeedMultiplier(ball, goalPart))
+					else
+						H.applyBeachBallKickVelocity(ball, goalPart)
+					end
 
 					local ballId = ball:GetAttribute("SoccerBallId")
 					if not ballId and primary ~= ball then
@@ -5019,37 +6996,90 @@
 					end
 				end
 
-				function H.onAutoGoalsServerGoal()
+				function H.getGoalModelNameFromScorePart(scorePart)
+					if not scorePart then
+						return nil
+					end
+
+					local model = scorePart.Parent
+					return model and model.Name or nil
+				end
+
+				function H.resolveAutoGoalsBallFromGoalScore(scorePart)
+					local goalName = H.getGoalModelNameFromScorePart(scorePart)
+					local lastBall = S.autoGoalsLastKickBallName
+					local lastGoal = S.autoGoalsLastKickGoalName
+
+					if goalName and lastGoal == goalName and lastBall then
+						return lastBall
+					end
+
+					if goalName == "Goal_2" then
+						return "Ball1"
+					end
+
+					if goalName == "Goal_1" then
+						if lastBall == "Ball2" or lastBall == "Ball" then
+							return lastBall
+						end
+						if not S.autoGoalsScoredBalls["Ball2"] then
+							return "Ball2"
+						end
+						return "Ball"
+					end
+
+					return lastBall
+				end
+
+				function H.onAutoGoalsServerGoal(scorePart)
 					if not S.autoGoalsRunning then
 						return
 					end
-					H.markAutoGoalsBallScored(S.autoGoalsLastKickBallName)
+
+					local ballName = H.resolveAutoGoalsBallFromGoalScore(scorePart)
+					if not ballName then
+						return
+					end
+
+					local now = os.clock()
+					if S.autoGoalsLastGoalConfirmBall == ballName and now - (S.autoGoalsLastGoalConfirmAt or 0) < 0.35 then
+						return
+					end
+
+					S.autoGoalsLastGoalConfirmBall = ballName
+					S.autoGoalsLastGoalConfirmAt = now
+					H.markAutoGoalsBallScored(ballName)
 				end
 
 				function H.ensureAutoGoalsGoalListener()
-					if S.autoGoalsGoalListener then
+					if S.autoGoalsGoalListener or S.autoGoalsRawGoalListener then
 						return true
 					end
 
+					local handler = function(scorePart)
+						H.onAutoGoalsServerGoal(scorePart)
+					end
+
 					local aero = H.getGlobal().Aero
-					if not aero or not aero.Services or not aero.Services.SoccerService then
-						return false
+					if aero and aero.Services and aero.Services.SoccerService then
+						local constants = H.getSharedConstants()
+						if constants and constants.RemoteEvents then
+							local remote = aero.Services.SoccerService[constants.RemoteEvents.SOCCER_GOAL]
+							if remote and remote.Connect then
+								S.autoGoalsGoalListener = remote:Connect(handler)
+							end
+						end
 					end
 
-					local constants = H.getSharedConstants()
-					if not constants or not constants.RemoteEvents then
-						return false
+					local aeroFolder = ReplicatedStorage:FindFirstChild("Aero")
+					local remoteServices = aeroFolder and aeroFolder:FindFirstChild("AeroRemoteServices")
+					local soccerService = remoteServices and remoteServices:FindFirstChild("SoccerService")
+					local rawRemote = soccerService and soccerService:FindFirstChild("SoccerGoal")
+					if rawRemote and rawRemote:IsA("RemoteEvent") then
+						S.autoGoalsRawGoalListener = rawRemote.OnClientEvent:Connect(handler)
 					end
 
-					local remote = aero.Services.SoccerService[constants.RemoteEvents.SOCCER_GOAL]
-					if not remote or not remote.Connect then
-						return false
-					end
-
-					S.autoGoalsGoalListener = remote:Connect(function()
-						H.onAutoGoalsServerGoal()
-					end)
-					return true
+					return S.autoGoalsGoalListener ~= nil or S.autoGoalsRawGoalListener ~= nil
 				end
 
 				function H.teardownAutoGoalsGoalListener()
@@ -5058,6 +7088,12 @@
 							S.autoGoalsGoalListener:Disconnect()
 						end)
 						S.autoGoalsGoalListener = nil
+					end
+					if S.autoGoalsRawGoalListener then
+						pcall(function()
+							S.autoGoalsRawGoalListener:Disconnect()
+						end)
+						S.autoGoalsRawGoalListener = nil
 					end
 				end
 
@@ -5283,6 +7319,15 @@
 						return false
 					end
 
+					if H.shouldAutoGoalsUseKothTouchPath() then
+						local goalsByName = H.collectBeachGoalsByName()
+						local goalPart = H.pickGoalForBeachBall(ball, goalsByName, H.getBeachBalls())
+						if goalPart then
+							H.faceCharacterTowardGoal(goalPart)
+							task.wait(0.05)
+						end
+					end
+
 					H.applyBeachBallSoftNoCollision(ball)
 					H.zeroBeachBallVelocity(ball)
 
@@ -5305,6 +7350,9 @@
 
 					local holdEnd = os.clock() + AUTO_GOALS_BALL_INSIDE_HOLD
 					while S.autoGoalsRunning and os.clock() < holdEnd do
+						if H.shouldAutoGoalsUseKothTouchPath() then
+							H.maintainKothHillDuringGoalKick()
+						end
 						local heldPos = H.getBeachBallInsidePlayerTarget(ball, AUTO_GOALS_BALL_ON_PLAYER_EMBED)
 						if heldPos then
 							H.slideBeachBallTo(ball, heldPos, 2, 0.02, true)
@@ -5395,6 +7443,17 @@
 
 					task.wait(AUTO_GOALS_TOUCH_SETTLE)
 					H.fireTouchPair(primary or ball, scorePart)
+
+					if H.shouldAutoGoalsUseKothTouchPath() then
+						local ballId = ball:GetAttribute("SoccerBallId")
+						if not ballId and primary and primary ~= ball then
+							ballId = primary:GetAttribute("SoccerBallId")
+						end
+						H.fireSoccerKick(ballId)
+						task.wait(0.05)
+						H.fireTouchPair(primary or ball, scorePart)
+					end
+
 					return true
 				end
 
@@ -5494,6 +7553,42 @@
 					return false
 				end
 
+				function H.getGroundTeleportCFrame()
+					for _, location in ipairs(MISC_TP_LOCATIONS) do
+						if location.label == "Ground" then
+							return CFrame.new(location.position)
+						end
+					end
+					return nil
+				end
+
+				function H.ensureOrbGroundTeleport()
+					local ground = H.getGroundTeleportCFrame()
+					if not ground then
+						return false
+					end
+					H.teleportCharacterTo(ground)
+					return true
+				end
+
+				function H.leaveFishingZone()
+					local fishingController = H.getFishingController()
+					if fishingController and fishingController.RequestStop then
+						pcall(function()
+							fishingController:RequestStop()
+						end)
+					end
+
+					if H.isInFishingZone() then
+						for _, location in ipairs(MISC_TP_LOCATIONS) do
+							if location.label == "Ground" then
+								H.teleportCharacterTo(CFrame.new(location.position))
+								break
+							end
+						end
+					end
+				end
+
 				function H.snapToFishingStand()
 					local root = H.getCharacterRoot()
 					if not root then
@@ -5513,6 +7608,16 @@
 				end
 
 				function H.fireFishingStart()
+					local fishingController = H.getFishingController()
+					if fishingController and fishingController.RequestStart then
+						local ok = pcall(function()
+							fishingController:RequestStart()
+						end)
+						if ok then
+							return true
+						end
+					end
+
 					local zap = H.getZapClient()
 					if not zap or not zap.FishingStart or not zap.FishingStart.Fire then
 						return false
@@ -6171,60 +8276,284 @@
 					end)
 				end
 
-				function H.getQuestTrackerScrollingFrame()
-					local gui = player:FindFirstChild("PlayerGui")
-					local hud = gui and gui:FindFirstChild("HUD")
-					local screen = hud and hud:FindFirstChild("Screen")
-					local tracker = screen and screen:FindFirstChild("QuestTracker")
-					local questBg = tracker and tracker:FindFirstChild("questBG")
-					return questBg and questBg:FindFirstChild("ScrollingFrame")
+				function H.getQuestController()
+					local aero = H.getGlobal().Aero
+					return aero and aero.Controllers and aero.Controllers.QuestController or nil
 				end
 
-				function H.parseActiveQuest()
-					local scrolling = H.getQuestTrackerScrollingFrame()
-					if not scrolling then
+				function H.getQuestHudController()
+					local aero = H.getGlobal().Aero
+					return aero and aero.Controllers and aero.Controllers.QuestHudController or nil
+				end
+
+				function H.getNewbieQuestsShared()
+					if C.newbieQuestsShared then
+						return C.newbieQuestsShared
+					end
+
+					local aeroFolder = ReplicatedStorage:FindFirstChild("Aero")
+					local sharedFolder = aeroFolder and aeroFolder:FindFirstChild("Shared")
+					local newbieScript = sharedFolder and sharedFolder:FindFirstChild("NewbieQuests")
+					if not newbieScript then
 						return nil
 					end
 
-					for _, widget in ipairs(scrolling:GetChildren()) do
-						if widget.Name == "questWgt" then
-							local desc = widget:FindFirstChild("desc")
-							local progBg = widget:FindFirstChild("progBG")
-							local prog = progBg and progBg:FindFirstChild("prog")
-							if desc and prog then
-								local descText = string.lower(desc.Text)
-								local progText = prog.Text
-								local currentText, goalText = string.match(progText, "(%d+)%s*/%s*(%d+)")
-								local goal = 0
-								local current = 0
-								local hasFraction = false
-								if currentText and goalText then
-									current = tonumber(currentText) or 0
-									goal = tonumber(goalText) or 0
-									hasFraction = true
-								else
-									local single = string.match(progText, "%d+")
-									if single then
-										goal = tonumber(single) or 0
-									end
-								end
+					local ok, mod = pcall(require, newbieScript)
+					if ok and mod then
+						C.newbieQuestsShared = mod
+						return mod
+					end
+					return nil
+				end
 
-								if goal > 0 then
-									if string.find(descText, "borock", 1, true) then
-										return "Boss", "Borock", goal, current, hasFraction, desc
-									elseif string.find(descText, "demonking", 1, true) or string.find(descText, "demon king", 1, true) then
-										return "Boss", "DemonKing", goal, current, hasFraction, desc
-									elseif string.find(descText, "golden", 1, true) then
-										return "Egg", "Golden", goal, current, hasFraction, desc
-									elseif string.find(descText, "orbs", 1, true) or string.find(descText, "orb", 1, true) then
-										return "Orb", "Orb", goal, current, hasFraction, desc
-									end
+				function H.getQuestsShared()
+					if C.questsShared then
+						return C.questsShared
+					end
+
+					local aeroFolder = ReplicatedStorage:FindFirstChild("Aero")
+					local sharedFolder = aeroFolder and aeroFolder:FindFirstChild("Shared")
+					local questsScript = sharedFolder and sharedFolder:FindFirstChild("Quests")
+					if not questsScript then
+						return nil
+					end
+
+					local ok, mod = pcall(require, questsScript)
+					if ok and mod then
+						C.questsShared = mod
+						return mod
+					end
+					return nil
+				end
+
+				function H.getClientQuestsFolder()
+					local gui = player:FindFirstChild("PlayerGui")
+					local clientData = gui and gui:FindFirstChild("ClientData")
+					return clientData and clientData:FindFirstChild("quests") or nil
+				end
+
+				function H.getActiveQuestKey()
+					local questController = H.getQuestController()
+					if questController and questController._activeQuestKey then
+						local ok, key = pcall(function()
+							return questController:_activeQuestKey()
+						end)
+						if ok and key then
+							return key
+						end
+					end
+
+					local questsFolder = H.getClientQuestsFolder()
+					local questsShared = H.getQuestsShared()
+					if questsFolder and questsShared then
+						local pool = questsShared.ActivePool
+						if type(pool) == "table" then
+							for _, key in ipairs(pool) do
+								local entry = questsFolder:FindFirstChild(key)
+								local active = entry and entry:FindFirstChild("active")
+								if active and active.Value then
+									return key
+								end
+							end
+						end
+
+						if questsShared.Keys then
+							for _, key in pairs(questsShared.Keys) do
+								local entry = questsFolder:FindFirstChild(key)
+								local active = entry and entry:FindFirstChild("active")
+								if active and active.Value then
+									return key
 								end
 							end
 						end
 					end
 
 					return nil
+				end
+
+				function H.getQuestState(questKey)
+					if not questKey then
+						return nil
+					end
+
+					local questController = H.getQuestController()
+					if questController and questController._questState then
+						local ok, state = pcall(function()
+							return questController:_questState(questKey)
+						end)
+						if ok and state then
+							return state
+						end
+					end
+
+					local questsFolder = H.getClientQuestsFolder()
+					local questsShared = H.getQuestsShared()
+					if not questsFolder or not questsShared then
+						return nil
+					end
+
+					local entry = questsFolder:FindFirstChild(questKey)
+					if not entry then
+						return nil
+					end
+
+					local level = entry:FindFirstChild("level")
+					local levelValue = level and level.Value or 1
+					local objectives = {}
+					local completed = true
+
+					for i, objectiveDef in ipairs(questsShared:GetObjectives(questKey)) do
+						local goal = questsShared:GetCountForLevel(questKey, levelValue, i)
+						local progressValue = entry:FindFirstChild(questsShared:ProgressField(i))
+						local progress = math.min(progressValue and progressValue.Value or 0, goal)
+						local done = progress >= goal
+						if not done then
+							completed = false
+						end
+						table.insert(objectives, {
+							verb = objectiveDef.Verb,
+							noun = objectiveDef.Noun,
+							pastVerb = objectiveDef.PastVerb,
+							goal = goal,
+							progress = progress,
+							done = done,
+						})
+					end
+
+					return {
+						key = questKey,
+						objectives = objectives,
+						completed = completed,
+					}
+				end
+
+				function H.getPrimaryQuestObjective(state)
+					if not state or not state.objectives then
+						return nil
+					end
+
+					for _, objective in ipairs(state.objectives) do
+						if not objective.done then
+							return objective
+						end
+					end
+
+					return state.objectives[1]
+				end
+
+				function H.mapQuestKeyToKind(questKey, state)
+					if questKey == "city_routine_quest" then
+						local objective = H.getPrimaryQuestObjective(state)
+						if not objective then
+							return nil
+						end
+
+						local noun = string.lower(objective.noun or "")
+						if string.find(noun, "orb", 1, true) then
+							return "Orb", "Orb"
+						end
+						if string.find(noun, "chest", 1, true) then
+							return "Chest", "Chest"
+						end
+						return nil
+					end
+
+					local kind = QUEST_KEY_TO_KIND[questKey]
+					if not kind then
+						return nil
+					end
+
+					return kind, QUEST_KEY_TO_TARGET[questKey] or kind
+				end
+
+				function H.parseNewbieQuest()
+					if H.getActiveQuestKey() then
+						return nil
+					end
+
+					local hud = H.getQuestHudController()
+					local newbie = hud and hud._newbie
+					if not newbie or not newbie.stage then
+						return nil
+					end
+
+					local newbieQuests = H.getNewbieQuestsShared()
+					if not newbieQuests or newbieQuests:IsDone(newbie.stage) then
+						return nil
+					end
+
+					local stage = newbieQuests:GetStage(newbie.stage)
+					if not stage or not stage.objectives or #stage.objectives == 0 then
+						return nil
+					end
+
+					local kind = NEWBIE_STAGE_KIND[stage.id]
+					if not kind then
+						return nil
+					end
+
+					local objective = stage.objectives[1]
+					local goal = objective.max or 1
+					local current = newbie.progress and newbie.progress[1] or 0
+					for i, obj in ipairs(stage.objectives) do
+						local progress = newbie.progress and newbie.progress[i] or 0
+						if progress < (obj.max or 1) then
+							objective = obj
+							goal = obj.max or 1
+							current = progress
+							break
+						end
+						objective = obj
+						goal = obj.max or 1
+						current = progress
+					end
+
+					local questKey = "newbie_" .. tostring(stage.id)
+					local state = {
+						key = questKey,
+						objectives = {
+							{
+								verb = objective.name,
+								noun = objective.name,
+								goal = goal,
+								progress = current,
+								done = current >= goal,
+							},
+						},
+						completed = current >= goal,
+					}
+
+					return kind, kind, goal, current, true, questKey, state
+				end
+
+				function H.parseActiveQuest()
+					local questKey = H.getActiveQuestKey()
+					if not questKey then
+						return H.parseNewbieQuest()
+					end
+
+					local state = H.getQuestState(questKey)
+					if not state then
+						return nil
+					end
+
+					local kind, targetKey = H.mapQuestKeyToKind(questKey, state)
+					if not kind then
+						return nil
+					end
+
+					local objective = H.getPrimaryQuestObjective(state)
+					local goal = objective and objective.goal or 0
+					local current = objective and objective.progress or 0
+					if goal <= 0 then
+						return nil
+					end
+
+					return kind, targetKey, goal, current, true, questKey, state
+				end
+
+				function H.isNewbieQuestKey(questKey)
+					return type(questKey) == "string" and string.sub(questKey, 1, 7) == "newbie_"
 				end
 
 				function H.getQuestBossModel(targetKey)
@@ -6265,8 +8594,12 @@
 					local nearestDist = math.huge
 					for _, child in ipairs(folder:GetChildren()) do
 						if child.Name == "ResourceNode" and child:IsA("BasePart") then
-							local prefab = child:FindFirstChild("Prefab")
-							if prefab and H.prefabHasMeshId(prefab, AUTO_QUEST_ORB_MESH_ID) then
+							local isOrb = H.isActiveNode(child) and not H.isNodeCollected(child)
+							if not isOrb then
+								local prefab = child:FindFirstChild("Prefab")
+								isOrb = prefab and H.prefabHasMeshId(prefab, AUTO_QUEST_ORB_MESH_ID)
+							end
+							if isOrb then
 								local dist = (root.Position - child.Position).Magnitude
 								if dist < nearestDist then
 									nearestDist = dist
@@ -6411,37 +8744,455 @@
 					S.autoQuestEggHits = 0
 					S.autoQuestWasAttackingBoss = false
 					S.autoQuestVisitedEggs = {}
+					S.autoQuestOrbGroundReady = false
+					S.autoQuestBossWaitTpDone = false
 				end
 
-				function H.isAutoQuestComplete(kind, goal, current, hasFraction)
-					if hasFraction then
-						return current >= goal
+				function H.cleanupAutoQuestBossFight()
+					H.cancelAutoQuestBossFollow()
+					H.ensureQuestBossSwing(false)
+				end
+
+				function H.restoreAutoQuestSubFeatures()
+					H.cleanupAutoQuestBossFight()
+					if S.autoQuestEnabledFish and H.setAutoFish then
+						H.setAutoFish(false, false)
+						H.leaveFishingZone()
+						S.autoQuestEnabledFish = false
 					end
-					if kind == "Boss" then
-						return S.autoQuestBossHits >= goal
-					elseif kind == "Orb" then
-						return S.autoQuestOrbHits >= goal
-					elseif kind == "Egg" then
-						return S.autoQuestEggHits >= goal
+					if S.autoQuestEnabledClicker and H.setAutoClicker then
+						H.setAutoClicker(false, false)
+						S.autoQuestEnabledClicker = false
 					end
+				end
+
+				function H.findQuestPetCratePart()
+					local cheapestCost = math.huge
+					local cheapestPart = nil
+
+					for _, tagged in ipairs(CollectionService:GetTagged("Crate")) do
+						local index = tonumber(string.match(tagged.Name, "^Pet(%d+)$"))
+						if index then
+							for _, slot in ipairs(WORLD_CRATE_SLOTS) do
+								if slot.kind == "pet" and slot.index == index then
+									local cost = select(1, H.getCaveCrateCostInfo(slot))
+									if cost and cost < cheapestCost then
+										cheapestCost = cost
+										cheapestPart = tagged
+									end
+									break
+								end
+							end
+						end
+					end
+
+					return cheapestPart
+				end
+
+				function H.getCheapestPetCrateSlot()
+					local cheapestSlot = nil
+					local cheapestCost = math.huge
+
+					for _, slot in ipairs(WORLD_CRATE_SLOTS) do
+						if slot.kind == "pet" then
+							local cost = select(1, H.getCaveCrateCostInfo(slot))
+							if cost and cost < cheapestCost then
+								cheapestCost = cost
+								cheapestSlot = slot
+							end
+						end
+					end
+
+					return cheapestSlot
+				end
+
+				function H.isPetEquipped(petKey)
+					local inventory = H.getPetInventoryData()
+					local entry = inventory and (inventory[petKey] or inventory[tostring(petKey)])
+					return type(entry) == "table" and entry.equipped == true
+				end
+
+				function H.deleteAllNewCrateRewards(slot, beforeKeys)
+					if not S.autoQuestDeleteRewards or type(beforeKeys) ~= "table" then
+						return false
+					end
+
+					local inventory = H.getCrateInventory(slot)
+					if type(inventory) ~= "table" then
+						return false
+					end
+
+					local toSell = {}
+					for key, entry in pairs(inventory) do
+						if type(entry) == "table" and not beforeKeys[tostring(key)] then
+							if slot.kind == "pet" and H.isPetEquipped(key) then
+								continue
+							end
+							if slot.kind == "pet" or slot.kind == "artifact" then
+								if H.sellCrateReward(slot, key) then
+									table.insert(toSell, key)
+								end
+							else
+								table.insert(toSell, tostring(key))
+							end
+						end
+					end
+
+					if slot.kind == "legendary" or slot.kind == "mythic" then
+						if #toSell > 0 then
+							return H.invokeSellInventoryItems(slot.itemType, toSell)
+						end
+					end
+
+					return #toSell > 0
+				end
+
+				function H.deleteNewInventoryItems(itemType, beforeKeys)
+					if not S.autoQuestDeleteRewards or type(beforeKeys) ~= "table" then
+						return false
+					end
+
+					local inventory = itemType == "weapon" and H.getWeaponInventoryData() or H.getSkinInventoryData()
+					if type(inventory) ~= "table" then
+						return false
+					end
+
+					local toSell = {}
+					for key, entry in pairs(inventory) do
+						if type(entry) == "table" and not beforeKeys[tostring(key)] then
+							table.insert(toSell, tostring(key))
+						end
+					end
+
+					if #toSell == 0 then
+						return false
+					end
+
+					return H.invokeSellInventoryItems(itemType, toSell)
+				end
+
+				function H.getQuestPetCrateSlot()
+					for _, slot in ipairs(WORLD_CRATE_SLOTS) do
+						if slot.id == "pet_1" then
+							return slot
+						end
+					end
+					return {
+						id = "pet_1",
+						kind = "pet",
+						index = 1,
+						title = "Pet 1",
+						desc = "5,000 gold — Cave crate",
+					}
+				end
+
+				function H.getQuestPetCratePart()
+					local petCrates = workspace:FindFirstChild("PetCrates")
+					local pet1 = petCrates and petCrates:FindFirstChild("Pet1")
+					if pet1 and pet1:IsA("BasePart") then
+						return pet1
+					end
+					return H.findQuestPetCratePart()
+				end
+
+				function H.tryClearPetInventoryForQuest(beforeKeys)
+					if not S.autoQuestDeleteRewards or type(beforeKeys) ~= "table" then
+						return false
+					end
+
+					local slot = { kind = "pet" }
+					local inventory = H.getPetInventoryData()
+					if type(inventory) ~= "table" then
+						return false
+					end
+
+					local sold = false
+					for key, entry in pairs(inventory) do
+						if type(entry) == "table" and not entry.equipped and not beforeKeys[tostring(key)] then
+							if H.sellCrateReward(slot, key) then
+								sold = true
+							end
+						end
+					end
+					return sold
+				end
+
+				function H.tryAutoQuestOpenPetCrate()
+					local slot = H.getQuestPetCrateSlot()
+					if not slot then
+						return false
+					end
+
+					local petPart = H.getQuestPetCratePart()
+					if petPart then
+						H.teleportCharacterTo(petPart.CFrame * CFrame.new(0, 3, 0))
+						task.wait(0.1)
+					end
+
+					local beforeKeys = H.snapshotInventoryKeys(slot)
+
+					if not H.canOpenCaveCrateSlot(slot) then
+						H.tryClearPetInventoryForQuest(beforeKeys)
+						if not H.canOpenCaveCrateSlot(slot) then
+							return false
+						end
+					end
+
+					local batchSize = H.getAffordableCrateBatchSize(slot, 1)
+					if batchSize <= 0 then
+						return false
+					end
+
+					local ok, result = H.invokeOpenCrates(slot, batchSize)
+					if not ok or not result then
+						return false
+					end
+
+					if S.autoQuestDeleteRewards then
+						H.deleteAllNewCrateRewards(slot, beforeKeys)
+					end
+
+					return true
+				end
+
+				function H.tryMakeChestOpenSpace(itemType)
+					local constants = H.getSharedConstants()
+					if not constants then
+						return false
+					end
+
+					local inventory = itemType == "weapon" and H.getWeaponInventoryData() or H.getSkinInventoryData()
+					local maxInventory = itemType == "weapon" and constants.WPN_MAX_INVENTORY or constants.SKN_MAX_INVENTORY
+					local inventorySize = H.getInventorySizeForItemType(itemType)
+					if not inventory or not maxInventory or not inventorySize or inventorySize < maxInventory then
+						return false
+					end
+
+					local toSell = {}
+					for key, entry in pairs(inventory) do
+						if type(entry) == "table" and (entry.id or entry.ID) then
+							table.insert(toSell, tostring(key))
+							if #toSell >= 3 then
+								break
+							end
+						end
+					end
+
+					if #toSell == 0 then
+						return false
+					end
+
+					return H.invokeSellInventoryItems(itemType, toSell)
+				end
+
+				function H.tryAutoQuestOpenChestBurst()
+					local openedAny = false
+					for _, itemType in ipairs({ "weapon", "skin" }) do
+						local crateKey = H.getNextChestKeyForItemType(itemType)
+						if not crateKey or H.getChestCount(crateKey) <= 0 then
+							continue
+						end
+
+						if not H.canOpenCrateKey(crateKey) then
+							H.tryMakeChestOpenSpace(itemType)
+						end
+
+						local batch = H.getInventoryChestBatchSize(crateKey)
+						if batch <= 0 then
+							continue
+						end
+
+						local inventory = itemType == "weapon" and H.getWeaponInventoryData() or H.getSkinInventoryData()
+						local beforeKeys = {}
+						if type(inventory) == "table" then
+							for key in pairs(inventory) do
+								beforeKeys[tostring(key)] = true
+							end
+						end
+
+						local ok = H.invokeOpenChests(crateKey, batch)
+						if ok then
+							openedAny = true
+							if S.autoQuestDeleteRewards then
+								H.deleteNewInventoryItems(itemType, beforeKeys)
+							end
+						end
+					end
+					return openedAny
+				end
+
+				function H.isAutoQuestComplete(state, goal, current)
+					if state and state.completed then
+						return true
+					end
+					if state and state.objectives then
+						local hasObjectives = false
+						for _, objective in ipairs(state.objectives) do
+							hasObjectives = true
+							if not objective.done then
+								return false
+							end
+						end
+						if hasObjectives then
+							return true
+						end
+					end
+					return goal ~= nil and current ~= nil and goal > 0 and current >= goal
+				end
+
+				function H.invokeEndQuestRequest()
+					local response = H.callGameService("EndQuestRequest")
+					if response ~= nil then
+						return response
+					end
+
+					local aeroFolder = ReplicatedStorage:FindFirstChild("Aero")
+					local services = aeroFolder and aeroFolder:FindFirstChild("AeroRemoteServices")
+					local gameService = services and services:FindFirstChild("GameService")
+					local remote = gameService and gameService:FindFirstChild("EndQuestRequest")
+					if remote and remote:IsA("RemoteFunction") then
+						return remote:InvokeServer()
+					end
+
+					return nil
+				end
+
+				function H.invokeStartQuestRequest()
+					local response = H.callGameService("StartQuestRequest")
+					if response ~= nil then
+						return response
+					end
+
+					local aeroFolder = ReplicatedStorage:FindFirstChild("Aero")
+					local services = aeroFolder and aeroFolder:FindFirstChild("AeroRemoteServices")
+					local gameService = services and services:FindFirstChild("GameService")
+					local remote = gameService and gameService:FindFirstChild("StartQuestRequest")
+					if remote and remote:IsA("RemoteFunction") then
+						return remote:InvokeServer()
+					end
+
+					return nil
+				end
+
+				function H.fireQuestTalkButton()
+					local gui = player:FindFirstChild("PlayerGui")
+					local talkGui = gui and gui:FindFirstChild("TalkGui")
+					local talkBtn = talkGui and talkGui:FindFirstChild("TalkBtn")
+					if not talkBtn then
+						return false
+					end
+
+					local ok = pcall(function()
+						talkBtn.Activated:Fire()
+					end)
+					return ok
+				end
+
+				function H.tryAutoQuestTalkTurnIn(state)
+					local questController = H.getQuestController()
+					if not questController then
+						return false
+					end
+
+					task.wait(0.8)
+					if not H.getActiveQuestKey() then
+						return true
+					end
+
+					local ok = pcall(function()
+						if questController.CompleteQuest then
+							questController:CompleteQuest()
+						end
+					end)
+					if ok then
+						task.wait(0.2)
+						return not H.getActiveQuestKey()
+					end
+
 					return false
+				end
+
+				function H.tryAutoQuestTurnIn(state)
+					local questKey = state and state.key or H.getActiveQuestKey()
+					if H.isNewbieQuestKey(questKey) then
+						return false
+					end
+
+					for _ = 1, 10 do
+						if questKey then
+							local freshState = H.getQuestState(questKey)
+							if freshState then
+								state = freshState
+							end
+						end
+
+						if not H.isAutoQuestComplete(state) then
+							return false
+						end
+
+						H.setStatus("Auto quest: turning in...")
+						H.fireQuestTalkButton()
+
+						local questController = H.getQuestController()
+						if questController and questController.CompleteQuest then
+							pcall(function()
+								questController:CompleteQuest()
+							end)
+						end
+
+						H.invokeEndQuestRequest()
+						task.wait(0.15)
+
+						if not H.getActiveQuestKey() then
+							return true
+						end
+					end
+
+					if H.tryAutoQuestTalkTurnIn(state) then
+						return true
+					end
+
+					return not H.getActiveQuestKey()
+				end
+
+				function H.waitForQuestInactive(timeoutSeconds)
+					local deadline = os.clock() + (timeoutSeconds or 3)
+					while os.clock() < deadline do
+						if not H.getActiveQuestKey() then
+							return true
+						end
+						task.wait(0.05)
+					end
+					return not H.getActiveQuestKey()
 				end
 
 				function H.runAutoQuestCycle()
 					while S.autoQuestRunning do
 						H.setAutoQuestNoCollide(false)
 
-						local kind, targetKey, goal, current, hasFraction, descLabel = H.parseActiveQuest()
+						local kind, targetKey, goal, current, hasFraction, questKey, state = H.parseActiveQuest()
 						if not kind then
 							H.setStatus("Auto quest: starting quest...")
-							H.callGameService("StartQuestRequest")
+							H.invokeStartQuestRequest()
 							task.wait(1)
 							continue
 						end
 
-						if S.autoQuestLastTarget ~= targetKey then
-							local previousKind = S.autoQuestLastKind
-							if previousKind == "Boss" and (kind == "Orb" or kind == "Egg") then
+						if S.autoQuestLastQuestKey ~= questKey or S.autoQuestLastTarget ~= targetKey then
+							local previousKey = S.autoQuestLastQuestKey
+							if S.autoQuestLastKind == "Fishing" and kind ~= "Fishing" then
+								H.leaveFishingZone()
+							end
+							if S.autoQuestLastKind == "Boss" and kind ~= "Boss" then
+								H.cleanupAutoQuestBossFight()
+							end
+							if S.autoQuestLastKind == "Orb" and kind ~= "Orb" then
+								S.autoQuestOrbGroundReady = false
+							end
+							if kind == "Orb" then
+								S.autoQuestOrbGroundReady = false
+							end
+							if previousKey == "dungeon_boss_quest" and questKey == "egg_collection_quest" then
 								H.teleportCharacterTo(AUTO_QUEST_EGG_TELEPORT)
 								task.wait(1)
 								if kind == "Egg" then
@@ -6450,56 +9201,104 @@
 							end
 							S.autoQuestLastKind = kind
 							S.autoQuestLastTarget = targetKey
+							S.autoQuestLastQuestKey = questKey
 							H.resetAutoQuestProgressCounters()
-							if kind ~= "Egg" or previousKind ~= "Boss" then
+							if questKey ~= "egg_collection_quest" or previousKey ~= "dungeon_boss_quest" then
 								S.autoQuestEggAreaReady = false
 							end
 						end
 
-						if H.isAutoQuestComplete(kind, goal, current, hasFraction) then
-							H.setStatus("Auto quest: completing quest...")
-							H.callGameService("EndQuestRequest")
-							task.wait(1)
-							if descLabel then
-								descLabel.Text = "a"
+						if questKey and not H.isNewbieQuestKey(questKey) then
+							local freshState = H.getQuestState(questKey)
+							if freshState then
+								state = freshState
+								local objective = H.getPrimaryQuestObjective(state)
+								if objective then
+									goal = objective.goal
+									current = objective.progress
+								end
 							end
-							H.callGameService("StartQuestRequest")
+						elseif state and state.objectives then
+							local objective = H.getPrimaryQuestObjective(state)
+							if objective then
+								goal = objective.goal
+								current = objective.progress
+							end
+						end
+
+						if H.isAutoQuestComplete(state, goal, current) then
+							H.setStatus("Auto quest: completing...")
+							if kind == "Fishing" then
+								H.leaveFishingZone()
+							end
+							if kind == "Boss" then
+								H.cleanupAutoQuestBossFight()
+							end
+							H.restoreAutoQuestSubFeatures()
+							if not H.isNewbieQuestKey(questKey) then
+								H.tryAutoQuestTurnIn(state)
+								H.waitForQuestInactive(3)
+								H.invokeStartQuestRequest()
+							else
+								task.wait(0.3)
+							end
 							H.resetAutoQuestProgressCounters()
 							S.autoQuestLastKind = nil
 							S.autoQuestLastTarget = nil
+							S.autoQuestLastQuestKey = nil
 							S.autoQuestEggAreaReady = false
-							task.wait(0.5)
+							task.wait(0.15)
 							continue
 						end
 
 						if kind == "Boss" then
-							local bossModel = H.getQuestBossModel(targetKey)
-							if bossModel then
-								local bossRoot = bossModel:FindFirstChild("Torso") or bossModel:FindFirstChild("HumanoidRootPart")
-								local humanoid = bossModel:FindFirstChildOfClass("Humanoid")
-								if bossRoot and humanoid and humanoid.Health > 0 then
-									S.autoQuestWasAttackingBoss = true
-									H.teleportCharacterTo(bossRoot.CFrame * CFrame.new(0, 0, 2))
-									H.fireQuestBossClick()
-								elseif S.autoQuestWasAttackingBoss then
-									S.autoQuestBossHits = S.autoQuestBossHits + 1
+							local def = H.getQuestBossDef(targetKey)
+							if not def then
+								task.wait(AUTO_QUEST_POLL)
+							else
+								local hum = H.getHumanoid()
+								if not hum or hum.Health <= 0 then
+									H.cleanupAutoQuestBossFight()
+									H.setStatus("Auto quest: respawning...")
+									H.waitForQuestRespawn(25)
+								elseif not H.isBossAlive(def) then
+									H.cleanupAutoQuestBossFight()
 									S.autoQuestWasAttackingBoss = false
+									H.ensureQuestBossWaitPosition(targetKey)
+									H.setStatus("Auto quest: waiting for " .. targetKey .. " to spawn...")
+									task.wait(0.4)
+								else
+									S.autoQuestBossWaitTpDone = false
+									S.autoQuestWasAttackingBoss = true
+									H.setStatus("Auto quest: fighting " .. targetKey)
+									H.ensureWeaponEquipped(H.getPlayerController())
+									H.ensureQuestBossSwing(true)
+
+									if S.autoQuestBossFollowDefId ~= def.id or not S.autoQuestBossFollowConnection then
+										H.startQuestBossFollow(def)
+									end
+
+									if not S.autoQuestBossSwingActive then
+										H.backgroundTrainSwing()
+									end
+
+									task.wait(AUTO_BOSS_POLL)
 								end
 							end
-							task.wait(AUTO_QUEST_POLL)
 						elseif kind == "Orb" then
+							if not S.autoQuestOrbGroundReady then
+								H.ensureOrbGroundTeleport()
+								S.autoQuestOrbGroundReady = true
+								task.wait(0.2)
+							end
 							local orbNode = H.findQuestOrbNode()
 							if orbNode then
-								H.setStatus("Auto quest: collecting orb")
+								H.setStatus(string.format("Auto quest: collecting orbs (%d/%d)", current, goal))
 								H.tweenAutoQuestTo(orbNode)
-								if S.autoQuestRunning then
-									task.wait(0.5)
-									S.autoQuestOrbHits = S.autoQuestOrbHits + 1
-								end
+								task.wait(0.2)
 							else
 								task.wait(0.5)
 							end
-							task.wait(0.1)
 						elseif kind == "Egg" then
 							if not S.autoQuestEggAreaReady then
 								H.teleportCharacterTo(AUTO_QUEST_EGG_TELEPORT)
@@ -6509,7 +9308,7 @@
 
 							local egg = H.findQuestEgg()
 							if egg then
-								H.setStatus("Auto quest: collecting egg")
+								H.setStatus(string.format("Auto quest: collecting eggs (%d/%d)", current, goal))
 								H.tweenAutoQuestTo(egg)
 								if S.autoQuestRunning then
 									S.autoQuestVisitedEggs[egg] = true
@@ -6521,20 +9320,76 @@
 										task.wait(0.1)
 										waited = waited + 0.1
 									end
-									S.autoQuestEggHits = S.autoQuestEggHits + 1
 									task.wait(0.2)
 								end
 							else
 								task.wait(0.5)
 							end
+						elseif kind == "Fishing" then
+							H.setStatus(string.format("Auto quest: fishing (%d/%d)", current, goal))
+							if not S.autoFishRunning and H.setAutoFish then
+								local fishingController = H.getFishingController()
+								if fishingController and fishingController.RequestGoFish then
+									pcall(function()
+										fishingController:RequestGoFish()
+									end)
+									task.wait(0.5)
+								end
+								H.setAutoFish(true, false)
+								S.autoQuestEnabledFish = true
+							end
+							task.wait(0.3)
+						elseif kind == "Swing" then
+							H.setStatus(string.format("Auto quest: swinging (%d/%d)", current, goal))
+							if not S.clickerRunning and H.setAutoClicker then
+								H.setAutoClicker(true, false)
+								S.autoQuestEnabledClicker = true
+							end
+							task.wait(0.3)
+						elseif kind == "Chest" then
+							H.setStatus(string.format("Auto quest: opening chests (%d/%d)", current, goal))
+							if H.tryAutoQuestOpenChestBurst() then
+								task.wait(0.05)
+							else
+								task.wait(0.15)
+							end
+						elseif kind == "QuestAccept" then
+							H.setStatus("Auto quest: accepting quest...")
+							H.invokeStartQuestRequest()
+							task.wait(0.3)
+						elseif kind == "QuestTurnIn" then
+							H.setStatus("Auto quest: waiting for quest turn-in...")
+							local rotKey = H.getActiveQuestKey()
+							if rotKey then
+								local rotState = H.getQuestState(rotKey)
+								if rotState and H.isAutoQuestComplete(rotState) then
+									H.tryAutoQuestTurnIn(rotState)
+								end
+							else
+								H.invokeStartQuestRequest()
+							end
+							task.wait(0.3)
+						elseif kind == "Upgrade" then
+							H.setStatus(string.format("Auto quest: upgrading (%d/%d)", current, goal))
+							if H.tryAutoUpgradeBurst() or H.tryMassUpgradeSkills() then
+								task.wait(0.2)
+							else
+								task.wait(0.5)
+							end
+						elseif kind == "PetHatch" then
+							H.setStatus(string.format("Auto quest: hatching pets (%d/%d)", current, goal))
+							H.tryAutoQuestOpenPetCrate()
+							task.wait(0.05)
 						end
 					end
 
+					H.restoreAutoQuestSubFeatures()
 					H.restoreCharacterMovementState()
 				end
 
 				function H.stopAutoQuestLoop()
 					S.autoQuestRunning = false
+					H.restoreAutoQuestSubFeatures()
 					H.restoreCharacterMovementState()
 				end
 
@@ -6545,6 +9400,7 @@
 					S.autoQuestLoopActive = true
 					S.autoQuestLastKind = nil
 					S.autoQuestLastTarget = nil
+					S.autoQuestLastQuestKey = nil
 					S.autoQuestEggAreaReady = false
 					H.resetAutoQuestProgressCounters()
 
@@ -6559,12 +9415,16 @@
 						return false
 					end
 
+					H.setAutoGoalsKickBusy(true)
+
 					local goals = {}
 					for _, goal in pairs(H.collectBeachGoalsByName()) do
 						table.insert(goals, goal)
 					end
 
 					S.autoGoalsLastKickBallName = ball.Name
+					local goalModel = goalPart.Parent
+					S.autoGoalsLastKickGoalName = goalModel and goalModel.Name or nil
 
 					if H.shouldResetBeachBallForAutoGoal(ball, goals) then
 						H.prepareBeachBallForAutoGoal(ball)
@@ -6574,19 +9434,30 @@
 
 					local confirmed = false
 
-					if H.touchBeachBallForAutoGoal(ball) then
-						task.wait(AUTO_GOALS_AFTER_TOUCH_DELAY)
-						H.restoreSingleBeachBallCollision(ball)
-						H.zeroBeachBallVelocity(ball)
-						if H.kickBeachBallAfterTouch(ball, goalPart) then
-							task.wait(AUTO_GOALS_POST_KICK_SETTLE)
-							if H.slideBeachBallIntoGoal(ball, goalPart) then
-								confirmed = H.waitForAutoGoalsServerConfirm(ball.Name, AUTO_GOALS_BALL_ATTEMPT_TIMEOUT)
+					local ok, kickErr = pcall(function()
+						if H.touchBeachBallForAutoGoal(ball) then
+							task.wait(AUTO_GOALS_AFTER_TOUCH_DELAY)
+							H.restoreSingleBeachBallCollision(ball)
+							H.zeroBeachBallVelocity(ball)
+							if H.kickBeachBallAfterTouch(ball, goalPart) then
+								task.wait(AUTO_GOALS_POST_KICK_SETTLE)
+								if H.slideBeachBallIntoGoal(ball, goalPart) then
+									local timeout = AUTO_GOALS_BALL_ATTEMPT_TIMEOUT
+									if H.shouldAutoGoalsUseKothTouchPath() then
+										timeout = timeout + 1.5
+									end
+									confirmed = H.waitForAutoGoalsServerConfirm(ball.Name, timeout)
+								end
 							end
 						end
-					end
+					end)
 
 					H.restoreSingleBeachBallCollision(ball)
+					H.setAutoGoalsKickBusy(false)
+
+					if not ok then
+						warn("[ExonHub] Auto goals kick error:", kickErr)
+					end
 
 					if confirmed then
 						H.setStatus(ball.Name .. " goal confirmed")
@@ -6666,11 +9537,13 @@
 					S.autoGoalsRunning = false
 					S.autoGoalsScoredBalls = {}
 					S.autoGoalsLastKickBallName = nil
+					S.autoGoalsLastKickGoalName = nil
+					S.autoGoalsKickBusy = false
+					S.autoGoalsLastGoalConfirmAt = 0
+					S.autoGoalsLastGoalConfirmBall = nil
 					H.teardownAutoGoalsGoalListener()
 					H.teardownAutoGoalsBallCollision()
-					if not S.autoFishRunning then
-						H.applySilentTrainMode(false)
-					end
+					H.applySilentTrainMode(false)
 				end
 
 				function H.startAutoGoalsLoop()
@@ -6742,6 +9615,32 @@
 
 				function H.stopAutoRebirthLoop()
 					S.autoRebirthRunning = false
+					H.teardownAutoRebirthLevelListener()
+				end
+
+				function H.teardownAutoRebirthLevelListener()
+					if S.autoRebirthLevelConn then
+						S.autoRebirthLevelConn:Disconnect()
+						S.autoRebirthLevelConn = nil
+					end
+				end
+
+				function H.ensureAutoRebirthLevelListener()
+					if S.autoRebirthLevelConn then
+						return
+					end
+
+					local stats = H.getClientStats()
+					local levelValue = stats and stats:FindFirstChild("level")
+					if not levelValue then
+						return
+					end
+
+					S.autoRebirthLevelConn = levelValue.Changed:Connect(function()
+						if S.autoRebirthRunning and H.canAutoRebirthNow() then
+							H.tryAutoRebirth()
+						end
+					end)
 				end
 
 				function H.startAutoRebirthLoop()
@@ -6785,9 +9684,10 @@
 					{ weapon = "t1_wpn_crate", skin = "t1_skin_crate" },
 				}
 				local AUTO_OPEN_IDLE_WAIT = 0
-				local AUTO_OPEN_BUSY_FAILS = 2
+				local AUTO_OPEN_BUSY_FAILS = 1000
 				local AUTO_OPEN_DELETE_POLL = 0
-				local AUTO_OPEN_DELETE_TRIES = 40
+				local AUTO_OPEN_DELETE_TRIES = 120
+				local AUTO_OPEN_BATCH_SIZE = 3
 
 				function H.getClientChests()
 					local gui = player:FindFirstChild("PlayerGui")
@@ -6976,67 +9876,205 @@
 					return true
 				end
 
-				function H.getOpenCrateInvoker()
-					if C.openCrateInvoker then
-						return C.openCrateInvoker
-					end
-
+				function H.getUIController()
 					local aero = H.getGlobal().Aero
-					if aero and aero.Services and aero.Services.GameService and aero.Services.GameService.OpenCrate then
-						local gameService = aero.Services.GameService
-						C.openCrateInvoker = function(crateKey)
-							return gameService:OpenCrate(crateKey)
-						end
-						return C.openCrateInvoker
-					end
+					return aero and aero.Controllers and aero.Controllers.UIController or nil
+				end
 
-					local aeroFolder = ReplicatedStorage:FindFirstChild("Aero")
-					local services = aeroFolder and aeroFolder:FindFirstChild("AeroRemoteServices")
-					local gameService = services and services:FindFirstChild("GameService")
-					local remote = gameService and gameService:FindFirstChild("OpenCrate")
-					if remote and remote:IsA("RemoteFunction") then
-						C.openCrateInvoker = function(crateKey)
-							return remote:InvokeServer(crateKey)
-						end
-						return C.openCrateInvoker
-					end
+				function H.getCrateOpenUIController()
+					local aero = H.getGlobal().Aero
+					return aero and aero.Controllers and aero.Controllers.CrateOpenUIController or nil
+				end
 
+				function H.getAutoOpenBatchSize(ownedCount)
+					local owned = math.max(0, math.floor(tonumber(ownedCount) or 0))
+					if owned <= 0 then
+						return 0
+					end
+					return math.min(AUTO_OPEN_BATCH_SIZE, owned)
+				end
+
+				function H.buildWorldCrateZapArgs(slot)
+					if not slot then
+						return nil
+					end
+					if slot.kind == "pet" then
+						return { kind = "pet", id = slot.index }
+					end
+					if slot.kind == "artifact" then
+						return { kind = "artifact", id = slot.index }
+					end
+					if slot.kind == "legendary" or slot.kind == "mythic" then
+						local prefix = slot.itemType == "weapon" and "wpn" or "skin"
+						local tier = slot.kind == "legendary" and "legendary" or "mythic"
+						return { kind = prefix .. "_" .. tier, id = 0 }
+					end
 					return nil
+				end
+
+				function H.getWorldCrateAutosellIdx()
+					return 1
+				end
+
+				function H.getAffordableCrateBatchSize(slot, maxBatch)
+					local cost, currency = H.getCaveCrateCostInfo(slot)
+					if not cost or not currency then
+						return 0
+					end
+					local affordable = math.floor(H.getCurrencyAmount(currency) / cost)
+					local batch = math.min(maxBatch or AUTO_OPEN_BATCH_SIZE, math.max(affordable, 0))
+					if batch <= 0 then
+						return 0
+					end
+
+					if slot.kind == "legendary" or slot.kind == "mythic" then
+						local constants = H.getSharedConstants()
+						local inventorySize = H.getInventorySizeForItemType(slot.itemType)
+						local maxInventory = slot.itemType == "weapon" and constants and constants.WPN_MAX_INVENTORY
+							or constants and constants.SKN_MAX_INVENTORY
+						if inventorySize and maxInventory then
+							local space = maxInventory - inventorySize
+							if space <= 0 then
+								return 0
+							end
+							batch = math.min(batch, space)
+						end
+					end
+
+					return batch
+				end
+
+				function H.getInventoryChestBatchSize(crateKey)
+					local count = H.getAutoOpenBatchSize(H.getChestCount(crateKey))
+					if count <= 0 then
+						return 0
+					end
+
+					local crates = H.getCratesModule()
+					local constants = H.getSharedConstants()
+					local crateData = crates and crates.Data and crates.Data[crateKey]
+					if crateData and constants then
+						local itemType = crateData.ItemType
+						local inventorySize = H.getInventorySizeForItemType(itemType)
+						local maxInventory = itemType == constants.ItemType.WEAPON and constants.WPN_MAX_INVENTORY
+							or constants.SKN_MAX_INVENTORY
+						if inventorySize and maxInventory then
+							local space = maxInventory - inventorySize
+							if space <= 0 then
+								return 0
+							end
+							count = math.min(count, space)
+						end
+					end
+
+					return count
+				end
+
+				function H.invokeOpenChests(crateKey, count)
+					local zap = H.getZapClient()
+					if not zap or not zap.OpenChests or not zap.OpenChests.Call then
+						return false, nil
+					end
+
+					local batchCount = count or H.getInventoryChestBatchSize(crateKey)
+					if batchCount <= 0 then
+						return false, nil
+					end
+
+					local ok, result = pcall(function()
+						return zap.OpenChests.Call({
+							crate = crateKey,
+							count = batchCount,
+						})
+					end)
+					H.flushZapClient()
+
+					if not ok or not result or result.status ~= "ok" or not result.results or #result.results == 0 then
+						return false, result
+					end
+
+					return true, result
+				end
+
+				function H.invokeOpenCrates(slot, count)
+					local zapArgs = H.buildWorldCrateZapArgs(slot)
+					if not zapArgs then
+						return false, nil
+					end
+
+					local zap = H.getZapClient()
+					if not zap or not zap.OpenCrates or not zap.OpenCrates.Call then
+						return false, nil
+					end
+
+					local batchCount = count or H.getAffordableCrateBatchSize(slot, AUTO_OPEN_BATCH_SIZE)
+					if batchCount <= 0 then
+						return false, nil
+					end
+
+					local ok, result = pcall(function()
+						return zap.OpenCrates.Call({
+							kind = zapArgs.kind,
+							id = zapArgs.id,
+							count = batchCount,
+							autosellIdx = H.getWorldCrateAutosellIdx(),
+						})
+					end)
+					H.flushZapClient()
+
+					local responseOk = H.getServerResponseOk()
+					if not ok or not result or result.res ~= responseOk or not result.results or #result.results == 0 then
+						return false, result
+					end
+
+					return true, result
 				end
 
 				function H.setCratePopupSuppressed(suppressed)
 					local aero = H.getGlobal().Aero
 					local hud = aero and aero.Controllers and aero.Controllers.HUDController
-					if not hud or not hud.StartCratePopup then
-						return
+					local ui = H.getUIController()
+
+					if hud and hud.StartCratePopup then
+						if suppressed then
+							if not C.originalStartCratePopup then
+								C.originalStartCratePopup = hud.StartCratePopup
+								hud.StartCratePopup = function() end
+							end
+						elseif C.originalStartCratePopup then
+							hud.StartCratePopup = C.originalStartCratePopup
+							C.originalStartCratePopup = nil
+						end
 					end
 
-					if suppressed then
-						if not C.originalStartCratePopup then
-							C.originalStartCratePopup = hud.StartCratePopup
-							hud.StartCratePopup = function() end
+					if ui and ui.ShowChestReveal then
+						if suppressed then
+							if not C.originalShowChestReveal then
+								C.originalShowChestReveal = ui.ShowChestReveal
+								ui.ShowChestReveal = function(_, payload)
+									if payload and payload.onClosed then
+										task.spawn(payload.onClosed)
+									end
+								end
+							end
+						elseif C.originalShowChestReveal then
+							ui.ShowChestReveal = C.originalShowChestReveal
+							C.originalShowChestReveal = nil
 						end
-					elseif C.originalStartCratePopup then
-						hud.StartCratePopup = C.originalStartCratePopup
-						C.originalStartCratePopup = nil
 					end
 				end
 
 				function H.warmAutoOpenCache()
-					H.getOpenCrateInvoker()
+					H.getZapClient()
 					H.getCratesModule()
 					H.getSharedConstants()
 					H.getChestInventoryController()
+					H.getUIController()
 				end
 
 				function H.invokeOpenCrateFast(crateKey)
-					local invoke = H.getOpenCrateInvoker()
-					if not invoke then
-						return false
-					end
-
-					local ok, itemType = pcall(invoke, crateKey)
-					return ok and itemType ~= nil
+					local ok = H.invokeOpenChests(crateKey)
+					return ok
 				end
 
 				function H.playCratePopup(itemType, itemId, crateKey)
@@ -7979,8 +11017,7 @@
 				end
 
 				function H.canOpenCaveCrateSlot(slot)
-					local cost, currency = H.getCaveCrateCostInfo(slot)
-					if not cost or H.getCurrencyAmount(currency) < cost then
+					if H.getAffordableCrateBatchSize(slot, 1) <= 0 then
 						return false
 					end
 
@@ -7998,51 +11035,162 @@
 				end
 
 				function H.handleCaveCrateOpenReward(slot, reward, beforeKeys)
-					if slot.kind == "legendary" or slot.kind == "mythic" then
-						local rewardItemId = H.resolveCrateRewardItemId(slot, reward, beforeKeys)
-						if H.hasCrateHuntTargets(slot.id) then
-							if H.isCrateHuntTargetItem(slot.id, rewardItemId) then
-								H.applyCrateHuntProgress(slot, rewardItemId)
-							else
-								-- Hunt mode: keep only selected targets, auto-delete everything else
-								H.tryAutoDeleteCrateRewardForced(
-									slot,
-									rewardItemId,
-									beforeKeys,
-									"Auto deleted non-target from " .. slot.title
-								)
-							end
-						end
-					elseif H.hasCrateAutoDeleteEnabled(slot.id) then
-						H.tryAutoDeleteCrateReward(slot, reward, beforeKeys)
-					end
+					H.processCaveCrateOpenRewardsSync(slot, { reward }, beforeKeys)
 				end
 
-				function H.tryOpenCaveCrateSlot(slot)
-					local responseOk = H.getServerResponseOk()
-					local status, reward
-					local beforeKeys = H.snapshotInventoryKeys(slot)
+				function H.resolveCrateRewardSellKey(slot, reward, beforeKeys, claimedKeys)
+					claimedKeys = claimedKeys or {}
 
-					local ok = pcall(function()
-						if slot.kind == "pet" then
-							status, reward = H.callGameService("OpenPetCrate", slot.index, 1)
-						elseif slot.kind == "artifact" then
-							status, reward = H.callGameService("OpenArtifactCrate", slot.index, 1)
-						elseif slot.kind == "legendary" then
-							status, reward = H.callGameService("OpenLegendaryCrate", slot.itemType, 1)
-						elseif slot.kind == "mythic" then
-							status, reward = H.callGameService("OpenMythicCrate", slot.itemType, 1)
+					if type(reward) == "string" or type(reward) == "number" then
+						local key = tostring(reward)
+						if not beforeKeys[key] and not claimedKeys[key] then
+							local inventory = H.getCrateInventory(slot)
+							local entry = inventory and (inventory[reward] or inventory[key])
+							if type(entry) == "table" then
+								claimedKeys[key] = true
+								return reward
+							end
 						end
-					end)
+					end
 
-					if not ok or status == nil or status ~= responseOk then
+					local itemId = H.resolveCrateRewardItemId(slot, reward, beforeKeys)
+					if not itemId then
+						return nil
+					end
+
+					local inventory = H.getCrateInventory(slot)
+					if type(inventory) ~= "table" then
+						return nil
+					end
+
+					for key, entry in pairs(inventory) do
+						local keyStr = tostring(key)
+						if type(entry) == "table" and not beforeKeys[keyStr] and not claimedKeys[keyStr] then
+							if tonumber(H.getCrateEntryItemId(slot, entry)) == tonumber(itemId) then
+								claimedKeys[keyStr] = true
+								return key
+							end
+						end
+					end
+
+					return nil
+				end
+
+				function H.processCaveCrateOpenRewardsSync(slot, rewards, beforeKeys)
+					if type(rewards) ~= "table" or #rewards == 0 then
 						return false
 					end
 
-					-- Don't block the open loop on sell/inventory settle
-					task.spawn(function()
-						H.handleCaveCrateOpenReward(slot, reward, beforeKeys)
-					end)
+					local claimedKeys = {}
+					local weaponSkinDeletes = {}
+					local otherDeletes = {}
+
+					for _, reward in ipairs(rewards) do
+						local rewardItemId = H.resolveCrateRewardItemId(slot, reward, beforeKeys)
+						local sellKey = H.resolveCrateRewardSellKey(slot, reward, beforeKeys, claimedKeys)
+						if sellKey then
+							local keyStr = tostring(sellKey)
+							beforeKeys[keyStr] = true
+						end
+
+						if slot.kind == "legendary" or slot.kind == "mythic" then
+							if H.hasCrateHuntTargets(slot.id) then
+								if H.isCrateHuntTargetItem(slot.id, rewardItemId) then
+									H.applyCrateHuntProgress(slot, rewardItemId)
+								elseif sellKey then
+									table.insert(weaponSkinDeletes, tostring(sellKey))
+								end
+							elseif H.hasCrateAutoDeleteEnabled(slot.id)
+								and rewardItemId
+								and H.isInCrateDeleteSet(slot.id, rewardItemId)
+								and sellKey
+							then
+								table.insert(weaponSkinDeletes, tostring(sellKey))
+							end
+						elseif H.hasCrateAutoDeleteEnabled(slot.id) and rewardItemId and H.isInCrateDeleteSet(slot.id, rewardItemId) and sellKey then
+							table.insert(otherDeletes, sellKey)
+						end
+					end
+
+					local deleted = false
+					if #weaponSkinDeletes > 0 then
+						deleted = H.invokeSellInventoryItems(slot.itemType, weaponSkinDeletes) or deleted
+					end
+					for _, sellKey in ipairs(otherDeletes) do
+						if H.sellCrateReward(slot, sellKey) then
+							deleted = true
+						end
+					end
+
+					if deleted then
+						H.setStatus("Auto deleted crate drop from " .. slot.title)
+					end
+
+					return deleted
+				end
+
+				function H.flushCrateSlotDeletes(slot)
+					if not slot or (slot.kind ~= "legendary" and slot.kind ~= "mythic") then
+						return false
+					end
+
+					local inventory = H.getCrateInventory(slot)
+					if type(inventory) ~= "table" then
+						return false
+					end
+
+					local toSell = {}
+					for key, entry in pairs(inventory) do
+						if type(entry) == "table" then
+							local itemId = H.getCrateEntryItemId(slot, entry)
+							local shouldDelete = false
+							if H.hasCrateHuntTargets(slot.id) then
+								shouldDelete = itemId and not H.isCrateHuntTargetItem(slot.id, itemId)
+							elseif H.hasCrateAutoDeleteEnabled(slot.id) then
+								shouldDelete = itemId and H.isInCrateDeleteSet(slot.id, itemId)
+							end
+							if shouldDelete then
+								table.insert(toSell, tostring(key))
+							end
+						end
+					end
+
+					if #toSell == 0 then
+						return false
+					end
+
+					return H.invokeSellInventoryItems(slot.itemType, toSell)
+				end
+
+				function H.tryOpenCaveCrateSlot(slot)
+					if H.hasCrateHuntTargets(slot.id) and H.areCrateHuntTargetsComplete(slot.id) then
+						H.setCaveAutoOpenSlot(slot.id, false, false)
+						return false
+					end
+
+					if slot.kind == "legendary" or slot.kind == "mythic" then
+						if not H.canOpenCaveCrateSlot(slot) then
+							H.flushCrateSlotDeletes(slot)
+						end
+					end
+
+					local beforeKeys = H.snapshotInventoryKeys(slot)
+					local batchSize = H.getAffordableCrateBatchSize(slot, AUTO_OPEN_BATCH_SIZE)
+					if batchSize <= 0 then
+						return false
+					end
+
+					local ok, result = H.invokeOpenCrates(slot, batchSize)
+					if not ok or not result then
+						return false
+					end
+
+					H.processCaveCrateOpenRewardsSync(slot, result.results, beforeKeys)
+
+					if H.areCrateHuntTargetsComplete(slot.id) then
+						H.setCaveAutoOpenSlot(slot.id, false, false)
+						H.setStatus(H.formatCrateHuntCompleteMessage(slot))
+					end
 
 					return true
 				end
@@ -8073,13 +11221,20 @@
 			function H.runCaveAutoOpenSlotLoop(slot)
 				local idleFails = 0
 				while H.isWorldCrateSlotActive(slot) do
+					if H.hasCrateHuntTargets(slot.id) and H.areCrateHuntTargetsComplete(slot.id) then
+						H.setCaveAutoOpenSlot(slot.id, false, false)
+						break
+					end
 					if not H.shouldMaxOutOpenCaveSlot(slot) then
 						task.wait(MAX_OUT_POLL)
 						continue
 					end
-					if H.canOpenCaveCrateSlot(slot) and H.tryOpenCaveCrateSlot(slot) then
+					if H.tryOpenCaveCrateSlot(slot) then
 						idleFails = 0
 					else
+						if slot.kind == "legendary" or slot.kind == "mythic" then
+							H.flushCrateSlotDeletes(slot)
+						end
 						idleFails += 1
 						if idleFails >= AUTO_OPEN_BUSY_FAILS then
 							task.wait(AUTO_OPEN_IDLE_WAIT)
@@ -8309,12 +11464,14 @@
 					end
 
 					local sellKey = nil
-					for _ = 1, AUTO_OPEN_DELETE_TRIES do
+					for i = 1, AUTO_OPEN_DELETE_TRIES do
 						sellKey = H.findNewRewardInventoryKey(slot, beforeKeys, rewardItemId)
 						if sellKey then
 							break
 						end
-						task.wait(AUTO_OPEN_DELETE_POLL)
+						if i < AUTO_OPEN_DELETE_TRIES then
+							task.wait()
+						end
 					end
 
 					if not sellKey then
@@ -8392,7 +11549,7 @@
 
 					UI.autoFishToggleElement = section:Toggle({
 						Title = "Auto Fish",
-						Desc = "AFK fish at the beach stand (Zap FishingStart)",
+						Desc = "AFK fish at the beach stand",
 						Value = false,
 						Callback = function(on)
 							if S.suppressAutoFishSync then
@@ -8420,7 +11577,7 @@
 
 					UI.autoGoalsToggleElement = section:Toggle({
 						Title = "Auto Goals",
-						Desc = "Beach soccer goals; with Auto Fish on, ball comes to you on the fishing stand",
+						Desc = "Beach soccer goals; with Auto Fish on, ball comes to you",
 						Value = false,
 						Callback = function(on)
 							if S.suppressAutoGoalsSync then
@@ -8428,6 +11585,26 @@
 							end
 							if H.setAutoGoals then
 								H.setAutoGoals(on == true, true)
+							end
+						end,
+					})
+
+					H.finalizeStaticSection(section)
+				end
+
+				function H.buildKothEventSection(tab, sectionTitle)
+					local section = H.createStaticBoxSection(tab, sectionTitle, "solar:crown-bold")
+
+					UI.autoKothToggleElement = section:Toggle({
+						Title = "Auto King of the Hill",
+						Desc = "TP to Floor2, hold position (KOTHSelf=2), earn shells; swings when KOTHState contested",
+						Value = false,
+						Callback = function(on)
+							if S.suppressAutoKothSync then
+								return
+							end
+							if H.setAutoKoth then
+								H.setAutoKoth(on == true, true)
 							end
 						end,
 					})
@@ -8579,11 +11756,29 @@
 				end
 
 				function H.shouldClickerUseSilentTrain()
-					return S.autoGoalsRunning == true or S.autoFishRunning == true
+					return S.autoGoalsRunning == true
 				end
 
 				function H.backgroundTrainSilent()
-					return H.fireTrainRemotes()
+					local pc = H.getPlayerController()
+
+					if not pc then
+						return H.fireTrainRemotes()
+					end
+
+					local ok = false
+					H.withFishingActivationBypass(function()
+						H.prepareSilentTrainWeapon(pc)
+						ok = H.fireTrainSwingViaController(pc)
+						if not ok then
+							ok = H.fireTrainRemotes()
+						end
+						if not ok then
+							ok = H.fireTrainViaInputSimulation(pc)
+						end
+					end)
+					H.ensureWeaponUnequipped(pc)
+					return ok
 				end
 
 				function H.applySilentTrainMode(enabled)
@@ -8628,7 +11823,7 @@
 							elseif pc.ToggleAutoClick and pc.IsAutoClicking and not pc:IsAutoClicking() then
 								pc:ToggleAutoClick()
 							elseif pc.OnWeaponActivated then
-								pc:OnWeaponActivated()
+								pc:OnWeaponActivated(true)
 							end
 						elseif pc.SetAutoClick and pc.DoAutoClick then
 							pc:SetAutoClick(false, true)
@@ -8638,32 +11833,62 @@
 				end
 
 				function H.fireTrainRemotes()
-					local attackStart, animComplete = H.getTrainRemotes()
-					if not attackStart then
-						return false
-					end
-					local ok = pcall(function()
-						attackStart:FireServer()
-						if animComplete then
-							task.wait(0.1)
-							animComplete:FireServer()
-						end
-					end)
+					local ok = H.fireTrainClick()
+					ok = H.firePlayerTrain() or ok
+					ok = H.fireTrainAttackStart() or ok
+					task.wait(TRAIN_REMOTE_SETTLE)
+					ok = H.fireTrainAnimComplete() or ok
 					return ok
 				end
 
-				function H.backgroundTrainSwing()
-					H.fireTrainRemotes()
-					local pc = H.getPlayerController()
-					if not pc then
+				function H.backgroundTrainBurst()
+					for i = 1, TRAIN_BURST_SWINGS do
+						H.backgroundTrainSwing()
+						if i < TRAIN_BURST_SWINGS then
+							task.wait(TRAIN_BURST_GAP)
+						end
+					end
+				end
+
+				function H.runClickerTrainTick()
+					if H.shouldClickerUseSilentTrain() then
+						H.applySilentTrainMode(true)
+						H.backgroundTrainSilent()
 						return
 					end
-					pcall(function()
-						H.ensureWeaponEquipped(pc)
-						if pc.OnWeaponActivated then
-							pc:OnWeaponActivated()
-						end
-					end)
+
+					if S.autoFishRunning then
+						return
+					end
+
+					H.applySilentTrainMode(false)
+					local pc = H.getPlayerController()
+					if pc and not pc.DoAutoClick then
+						H.tryAeroAutoSwing(pc, true)
+					end
+
+					if pc and pc.DoAutoClick then
+						H.fireTrainClick()
+						return
+					end
+
+					H.backgroundTrainBurst()
+				end
+
+				function H.backgroundTrainSwing()
+					local pc = H.getPlayerController()
+					local swung = false
+					if pc then
+						swung = pcall(function()
+							H.ensureWeaponEquipped(pc)
+							if pc.OnWeaponActivated then
+								pc:OnWeaponActivated(true)
+							end
+						end)
+					end
+					if not swung then
+						H.fireTrainRemotes()
+					end
 				end
 
 				function H.stopClickerLoop()
@@ -8678,42 +11903,24 @@
 					S.clickerLoopActive = true
 
 					task.spawn(function()
-						local pc = H.waitForPlayerController(25)
-						local aeroAutoActive = false
+						H.waitForPlayerController(25)
 
-						if S.clickerRunning and pc then
+						if S.clickerRunning then
 							if H.shouldClickerUseSilentTrain() then
 								H.applySilentTrainMode(true)
-								aeroAutoActive = false
-								print("[ExonHub] Auto click: silent train (fish/goals active)")
+								print("[ExonHub] Auto click: silent train (goals active)")
 							else
-								H.tryAeroAutoSwing(pc, true)
-								task.wait(0.35)
-								aeroAutoActive = pc.DoAutoClick == true
-								if aeroAutoActive then
-									print("[ExonHub] Background auto swing (game controller)")
-								else
-									print("[ExonHub] Background auto swing (remote fallback)")
-								end
+								H.applySilentTrainMode(false)
+								print("[ExonHub] Auto click train loop active")
 							end
-						elseif S.clickerRunning then
-							print("[ExonHub] Background auto swing (remote fallback)")
 						end
 
 						while S.clickerRunning do
-							if H.shouldClickerUseSilentTrain() then
-								H.applySilentTrainMode(true)
-								aeroAutoActive = false
-								H.backgroundTrainSilent()
-								task.wait(TRAIN_INTERVAL)
-							elseif not aeroAutoActive then
-								H.backgroundTrainSwing()
-								task.wait(TRAIN_INTERVAL)
-							else
-								task.wait(0.5)
-							end
+							H.runClickerTrainTick()
+							task.wait(TRAIN_INTERVAL)
 						end
 
+						H.applySilentTrainMode(false)
 						H.tryAeroAutoSwing(H.getPlayerController(), false)
 						S.clickerLoopActive = false
 					end)
@@ -9969,38 +13176,7 @@
 					end
 				end
 
-				function H.updateMaxOutStatusLabel(progress)
-					if not UI.maxOutStatusParagraph or not UI.maxOutStatusParagraph.SetDesc then
-						return
-					end
-					if not S.maxOutRunning then
-						pcall(function()
-							UI.maxOutStatusParagraph:SetDesc("Idle — choose rarity, then turn Auto Max Out ON")
-						end)
-						return
-					end
-					if not progress or not progress.tier then
-						pcall(function()
-							UI.maxOutStatusParagraph:SetDesc("Waiting for rarity targets...")
-						end)
-						return
-					end
-
-					local dualText = progress.neededWeapons > 1 and "main+offhand" or "main"
-					local desc = string.format(
-						"ON | %s | phase: %s | weapons %d/%d (%s) | skin %d/1 | %s / %s",
-						progress.tier,
-						tostring(S.maxOutPhase or "idle"),
-						progress.weaponOwnedCount or 0,
-						progress.neededWeapons or 1,
-						dualText,
-						progress.skinOwnedCount or 0,
-						tostring(progress.bestWeaponName or "?"),
-						tostring(progress.bestSkinName or "?")
-					)
-					pcall(function()
-						UI.maxOutStatusParagraph:SetDesc(desc)
-					end)
+				function H.updateMaxOutStatusLabel(_progress)
 				end
 
 				function H.maxOutTick()
@@ -10987,9 +14163,6 @@
 					local Window = WindUI:CreateWindow({
 						Title = "Exon Hub",
 						Folder = "ExonHub",
-						Icon = EXONHUB_ICON_ASSET,
-						IconSize = EXONHUB_TOPBAR_ICON_SIZE,
-						IconThemed = false,
 						NewElements = true,
 						ToggleKey = H.getMinimizeHotkeyEnum(),
 						OpenButton = {
@@ -11054,6 +14227,20 @@
 						end,
 					})
 
+					UI.autoQuestDeleteToggleElement = FarmSection:Toggle({
+						Title = "Auto Delete Quest Drops",
+						Desc = "Sells items from chests, crates, and pet eggs opened for quest progress",
+						Value = S.autoQuestDeleteRewards == true,
+						Callback = function(on)
+							if S.suppressAutoQuestDeleteSync then
+								return
+							end
+							if H.setAutoQuestDeleteRewards then
+								H.setAutoQuestDeleteRewards(on == true, true)
+							end
+						end,
+					})
+
 					H.finalizeStaticSection(FarmSection)
 
 					local MaxOutSection = H.createStaticBoxSection(FarmingTab, "Training — Max Out", "solar:fire-bold")
@@ -11091,16 +14278,6 @@
 
 					if not okMaxOutDropdown then
 						warn("[ExonHub] Max Out dropdown failed:", maxOutDropdownErr)
-					end
-
-					local okMaxOutStatus = pcall(function()
-						UI.maxOutStatusParagraph = MaxOutSection:Paragraph({
-							Title = "Max Out Status",
-							Desc = "Idle — choose rarity, then turn Auto Max Out ON",
-						})
-					end)
-					if not okMaxOutStatus then
-						UI.maxOutStatusParagraph = nil
 					end
 
 					H.finalizeStaticSection(MaxOutSection)
@@ -11480,6 +14657,7 @@
 
 					H.buildShellEggEventSection(EventTab, "Event Eggs")
 					H.buildBeachGoalsEventSection(EventTab, "Beach Soccer")
+					H.buildKothEventSection(EventTab, "King of the Hill")
 					H.buildMineRaceEventSection(EventTab, "Shell Race")
 
 					local SettingsTab = OthersSection:Tab({
@@ -11518,6 +14696,14 @@
 							if H.setAutoSaveSettings then
 								H.setAutoSaveSettings(on == true, true)
 							end
+						end,
+					})
+
+					SettingsSection:Button({
+						Title = "Reset ExonHub",
+						Desc = "Delete all saved ExonHub and WindUI files from your executor",
+						Callback = function()
+							H.promptResetExonHub()
 						end,
 					})
 
@@ -11739,6 +14925,7 @@
 
 				function H.resetOrbFarmMovement()
 					S.orbFirstSnapDone = false
+					S.orbGroundTeleported = false
 					H.cancelOrbFollowTween()
 				end
 
@@ -11759,6 +14946,11 @@
 					local hrp = H.getCharacterRoot()
 					if not hrp or not node or not node.Parent then
 						return false
+					end
+
+					if S.orbGroundTeleported then
+						useSnap = false
+						S.orbGroundTeleported = false
 					end
 
 					local goal = H.getOrbStandCFrame(node)
@@ -11894,6 +15086,12 @@
 							continue
 						end
 
+						if not S.orbGroundTeleported and not S.orbFirstSnapDone then
+							H.ensureOrbGroundTeleport()
+							S.orbGroundTeleported = true
+							task.wait(0.15)
+						end
+
 						local claimed = H.farmOnce()
 						if not S.running then
 							break
@@ -11912,6 +15110,8 @@
 					S.running = state
 					if S.running then
 						H.resetOrbFarmMovement()
+						H.ensureOrbGroundTeleport()
+						S.orbGroundTeleported = true
 						S.farmLoopActive = false
 						print("[ExonHub] Farm ON")
 						H.setStatus("Running...")
@@ -11939,6 +15139,12 @@
 						S.clickerRunning = true
 						if H.shouldClickerUseSilentTrain() then
 							H.applySilentTrainMode(true)
+						else
+							task.defer(function()
+								if S.clickerRunning and not H.shouldClickerUseSilentTrain() then
+									H.tryAeroAutoSwing(H.getPlayerController(), true)
+								end
+							end)
 						end
 						print("[ExonHub] Auto click ON")
 						H.setStatus("Auto click ON")
@@ -11966,7 +15172,13 @@
 					if state then
 						print("[ExonHub] Auto rebirth ON at level", S.autoRebirthTargetLevel)
 						H.setStatus("Auto rebirth ON (level " .. S.autoRebirthTargetLevel .. ")")
+						H.ensureAutoRebirthLevelListener()
 						H.startAutoRebirthLoop()
+						task.defer(function()
+							if S.autoRebirthRunning and H.canAutoRebirthNow() then
+								H.tryAutoRebirth()
+							end
+						end)
 					else
 						H.stopAutoRebirthLoop()
 						print("[ExonHub] Auto rebirth OFF")
@@ -12064,7 +15276,8 @@
 						S.autoGoalsScoredBalls = {}
 						S.autoGoalsBallSpawns = {}
 						S.autoGoalsLastKickBallName = nil
-						if S.clickerRunning then
+						S.autoGoalsLastKickGoalName = nil
+						if S.clickerRunning or S.autoKothRunning then
 							H.applySilentTrainMode(true)
 						end
 						print("[ExonHub] Auto goals ON")
@@ -12084,6 +15297,34 @@
 
 				H.setAutoGoals = H.setAutoGoalsImpl
 
+				function H.setAutoKothImpl(state, fromToggle)
+					if S.autoKothRunning == state then
+						return
+					end
+
+					S.autoKothRunning = state
+					if state then
+						S.autoKothLastSwingAt = 0
+						if S.autoGoalsRunning then
+							H.applySilentTrainMode(true)
+						end
+						print("[ExonHub] Auto KOTH ON")
+						H.setStatus("Auto KOTH ON")
+						H.startAutoKothLoop()
+					else
+						H.stopAutoKothLoop()
+						print("[ExonHub] Auto KOTH OFF")
+						H.setStatus("Auto KOTH OFF")
+					end
+
+					if not fromToggle then
+						H.syncAutoKothToggle(state)
+					end
+					H.scheduleSettingsSave()
+				end
+
+				H.setAutoKoth = H.setAutoKothImpl
+
 				function H.setAutoFishImpl(state, fromToggle)
 					if S.autoFishRunning == state then
 						return
@@ -12092,9 +15333,6 @@
 					S.autoFishRunning = state
 					if state then
 						S.autoFishPhase = FISHING_PHASE_IDLE
-						if S.clickerRunning then
-							H.applySilentTrainMode(true)
-						end
 						print("[ExonHub] Auto fish ON")
 						H.setStatus("Auto fish ON")
 						H.startAutoFishLoop()
@@ -12159,6 +15397,20 @@
 				end
 
 				H.setAutoQuest = H.setAutoQuestImpl
+
+				function H.setAutoQuestDeleteRewardsImpl(state, fromToggle)
+					if S.autoQuestDeleteRewards == state then
+						return
+					end
+
+					S.autoQuestDeleteRewards = state
+					if not fromToggle then
+						H.syncAutoQuestDeleteToggle(state)
+					end
+					H.scheduleSettingsSave()
+				end
+
+				H.setAutoQuestDeleteRewards = H.setAutoQuestDeleteRewardsImpl
 
 				function H.setAutoUpgradeRodImpl(state, fromToggle)
 					if S.autoUpgradeRodRunning == state then
@@ -12545,25 +15797,6 @@
 							H.saveSettingsSnapshot(true)
 						end
 					end
-
-					H.setStatus("Loading...")
-					task.spawn(function()
-						for _ = 1, 10 do
-							local folder = H.getNodesFolder()
-							if folder then
-								H.debugScan()
-								local active = #H.getActiveNodes()
-								if active > 0 then
-									H.setStatus("Ready â€” " .. active .. " node(s)")
-								else
-									H.setStatus("0 nodes â€” wait for respawn")
-								end
-								return
-							end
-							task.wait(1)
-						end
-						H.setStatus("Missing ResourceNodes1")
-					end)
 				end)
 
 				if not ok then
