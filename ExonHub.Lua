@@ -271,6 +271,7 @@
 					autoQuestDeleteRewards = false,
 					autoQuestEnabledFish = false,
 					autoQuestEnabledClicker = false,
+					autoQuestEnabledKill = false,
 					orbGroundTeleported = false,
 					suppressAutoQuestSync = false,
 					suppressAutoQuestDeleteSync = false,
@@ -341,6 +342,7 @@
 				maxOutEnabledUpgrade = false,
 				maxOutStopping = false,
 				maxOutManagedUpgrade = false,
+					maxOutLastComplete = false,
 					suppressMaxOutSync = false,
 					suppressMaxOutToggleSync = false,
 					autoRebirthTargetLevel = 100,
@@ -565,6 +567,13 @@
 				local AUTO_QUEST_EGG_TELEPORT = CFrame.new(1910.08, 204.22, -976.7)
 				local AUTO_QUEST_POLL = 0.05
 				local AUTO_QUEST_EGG_VISITED_TTL = 3
+				local QUEST_PET_HATCH_SLOT = {
+					id = "pet_1",
+					kind = "pet",
+					index = 1,
+					title = "Pet 1",
+					desc = "5,000 gold — Cave crate",
+				}
 				local QUEST_KEY_TO_KIND = {
 					orb_quest = "Orb",
 					egg_collection_quest = "Egg",
@@ -575,6 +584,10 @@
 					chest_quest = "Chest",
 					upgrade_quest = "Upgrade",
 					swing_quest = "Swing",
+					city_routine_quest = "CityRoutine",
+					kill_quest = "ArenaKill",
+					arena_wins_quest = "Arena",
+					arena_quest = "Arena",
 				}
 				local QUEST_KEY_TO_TARGET = {
 					dungeon_boss_quest = "Borock",
@@ -583,12 +596,15 @@
 				local NEWBIE_STAGE_KIND = {
 					swing = "Swing",
 					chest = "Chest",
+					equip = "ItemEquip",
 					orbs = "Orb",
 					upgrade = "Upgrade",
 					hatch = "PetHatch",
-					fish = "Fishing",
+					petequip = "PetEquip",
 					accept = "QuestAccept",
 					turnin = "QuestTurnIn",
+					arena = "Arena",
+					fish = "Fishing",
 				}
 				local AUTO_UPGRADE_ROD_POLL = 1.5
 				local AUTO_UPGRADE_ROD_BUY_COOLDOWN = 1.3
@@ -3565,17 +3581,26 @@
 					S.autoUpgradeFailStreak = 0
 					S.autoUpgradeLastRebirthCount = H.getRebirthCount()
 					S.autoUpgradeLastPlayerLevel = H.getPlayerLevel()
+					S.maxOutLastComplete = false
 
-					if S.autoUpgradeRunning or (S.maxOutRunning and S.maxOutPhase == "upgrading") then
+					if S.maxOutRunning and S.maxOutPhase == "upgrading" then
+						S.maxOutPhase = "hunting"
+					end
+
+					if S.autoUpgradeRunning or S.maxOutRunning then
 						task.defer(function()
 							task.wait(AUTO_UPGRADE_POST_REBIRTH_WAIT)
 							H.invalidateUpgradeInventorySnapshots()
-							if S.maxOutRunning and S.maxOutPhase == "upgrading" then
+							S.autoUpgradeFailStreak = 0
+							if S.maxOutRunning then
 								local progress = H.getMaxOutProgress(H.normalizeMaxOutTier(S.maxOutTier))
 								if progress and progress.complete then
+									S.maxOutLastComplete = true
 									H.equipMaxOutGear(progress)
+									H.ensureMaxOutUpgradeEnabled()
 								end
 							end
+							H.ensureAutoUpgradeLoopRunning()
 							H.tryAutoUpgradeBurst()
 						end)
 					end
@@ -3654,7 +3679,20 @@
 				end
 
 				function H.isValidUpgradeEntry(entry)
-					return H.getUpgradeInventoryEntry(entry) ~= nil
+					if H.getUpgradeInventoryEntry(entry) ~= nil then
+						return true
+					end
+
+					-- After rebirth the UI inventory controller can lag behind GameDataService.
+					if S.maxOutRunning then
+						local progress = H.getMaxOutProgress(H.normalizeMaxOutTier(S.maxOutTier))
+						if progress and progress.complete then
+							local inventory = H.getUpgradeInventorySnapshot(entry.kind, true)
+							return H.lookupUpgradeInventoryEntry(inventory, entry) ~= nil
+						end
+					end
+
+					return false
 				end
 
 				function H.appendUpgradeEntry(entries, key, kind, order)
@@ -3677,7 +3715,7 @@
 				end
 
 				function H.getMaxOutUpgradeEntries()
-					if not S.maxOutRunning or S.maxOutPhase ~= "upgrading" then
+					if not S.maxOutRunning then
 						return nil
 					end
 
@@ -4081,6 +4119,12 @@
 					S.autoUpgradeRunning = false
 				end
 
+				function H.ensureAutoUpgradeLoopRunning()
+					if S.autoUpgradeRunning and not S.autoUpgradeLoopActive then
+						H.startAutoUpgradeLoop()
+					end
+				end
+
 				function H.startAutoUpgradeLoop()
 					if S.autoUpgradeLoopActive then
 						return
@@ -4089,7 +4133,11 @@
 
 					task.spawn(function()
 						while S.autoUpgradeRunning do
-							if H.tryAutoUpgradeBurst() then
+							local ok, upgraded = pcall(H.tryAutoUpgradeBurst)
+							if not ok then
+								warn("[ExonHub] Auto upgrade burst error:", upgraded)
+								H.invalidateUpgradeInventorySnapshots()
+							elseif upgraded then
 								H.setStatus("Auto upgraded equipped gear")
 							else
 								task.wait(AUTO_UPGRADE_IDLE_WAIT)
@@ -8627,12 +8675,35 @@
 
 				function H.getActiveQuestKey()
 					local questController = H.getQuestController()
-					if questController and questController._activeQuestKey then
-						local ok, key = pcall(function()
-							return questController:_activeQuestKey()
-						end)
-						if ok and key then
-							return key
+					if questController then
+						if questController._activeQuestKey then
+							local ok, key = pcall(function()
+								return questController:_activeQuestKey()
+							end)
+							if ok and key then
+								return key
+							end
+						end
+
+						if type(questController.Quests) == "table" then
+							for key, entry in pairs(questController.Quests) do
+								if type(entry) == "table" and entry.active and entry.active.Value then
+									return key
+								end
+							end
+						end
+
+						if questController._acceptedQuest then
+							return questController._acceptedQuest
+						end
+					end
+
+					local hud = H.getQuestHudController()
+					if hud and type(hud._rotation) == "table" then
+						for key, entry in pairs(hud._rotation) do
+							if type(entry) == "table" and entry.active and entry.active.Value then
+								return key
+							end
 						end
 					end
 
@@ -8664,6 +8735,57 @@
 					return nil
 				end
 
+				function H.waitForActiveQuestKey(timeoutSeconds)
+					local deadline = os.clock() + (timeoutSeconds or 4)
+					local key = H.getActiveQuestKey()
+					while not key and os.clock() < deadline do
+						task.wait(0.15)
+						key = H.getActiveQuestKey()
+					end
+					return key
+				end
+
+				function H.buildQuestStateFromController(questKey)
+					local questController = H.getQuestController()
+					local questsShared = H.getQuestsShared()
+					if not questController or not questsShared or type(questController.Quests) ~= "table" then
+						return nil
+					end
+
+					local entry = questController.Quests[questKey]
+					if not entry or not entry.level then
+						return nil
+					end
+
+					local levelValue = entry.level.Value or 1
+					local objectives = {}
+					local completed = true
+
+					for i, objectiveDef in ipairs(questsShared:GetObjectives(questKey)) do
+						local goal = questsShared:GetCountForLevel(questKey, levelValue, i)
+						local progressObj = entry.progress and entry.progress[i]
+						local progress = math.min(progressObj and progressObj.Value or 0, goal)
+						local done = progress >= goal
+						if not done then
+							completed = false
+						end
+						table.insert(objectives, {
+							verb = objectiveDef.Verb,
+							noun = objectiveDef.Noun,
+							pastVerb = objectiveDef.PastVerb,
+							goal = goal,
+							progress = progress,
+							done = done,
+						})
+					end
+
+					return {
+						key = questKey,
+						objectives = objectives,
+						completed = completed,
+					}
+				end
+
 				function H.getQuestState(questKey)
 					if not questKey then
 						return nil
@@ -8677,6 +8799,11 @@
 						if ok and state then
 							return state
 						end
+					end
+
+					local controllerState = H.buildQuestStateFromController(questKey)
+					if controllerState then
+						return controllerState
 					end
 
 					local questsFolder = H.getClientQuestsFolder()
@@ -8756,12 +8883,64 @@
 						return nil
 					end
 
+					if kind == "CityRoutine" then
+						return H.mapQuestKeyToKind("city_routine_quest", state)
+					end
+
 					return kind, QUEST_KEY_TO_TARGET[questKey] or kind
 				end
 
+				function H.ensureNewbieQuestLoaded(maxWait)
+					local hud = H.getQuestHudController()
+					if not hud then
+						return false
+					end
+					if hud._newbie then
+						return true
+					end
+
+					local zap = H.getZapClient()
+					if zap and zap.QuestLineRequest and zap.QuestLineRequest.Fire then
+						pcall(function()
+							zap.QuestLineRequest.Fire()
+						end)
+					end
+
+					local deadline = os.clock() + (maxWait or 6)
+					while os.clock() < deadline do
+						if hud._newbie then
+							return true
+						end
+						if zap and zap.QuestLineRequest and zap.QuestLineRequest.Fire then
+							pcall(function()
+								zap.QuestLineRequest.Fire()
+							end)
+						end
+						task.wait(0.35)
+					end
+
+					return hud._newbie ~= nil
+				end
+
+				function H.getNewbieObjectiveProgress(objective, index, newbie)
+					if type(objective) ~= "table" then
+						return 0
+					end
+					if objective.absolute == true or objective.id == "level" then
+						return H.getPlayerLevel()
+					end
+					return newbie and newbie.progress and newbie.progress[index] or 0
+				end
+
 				function H.parseNewbieQuest()
-					if H.getActiveQuestKey() then
-						return nil
+					H.ensureNewbieQuestLoaded(2)
+
+					local activeKey = H.getActiveQuestKey()
+					if activeKey then
+						local activeState = H.getQuestState(activeKey)
+						if not activeState or not activeState.completed then
+							return nil
+						end
 					end
 
 					local hud = H.getQuestHudController()
@@ -8787,9 +8966,9 @@
 
 					local objective = stage.objectives[1]
 					local goal = objective.max or 1
-					local current = newbie.progress and newbie.progress[1] or 0
+					local current = H.getNewbieObjectiveProgress(objective, 1, newbie)
 					for i, obj in ipairs(stage.objectives) do
-						local progress = newbie.progress and newbie.progress[i] or 0
+						local progress = H.getNewbieObjectiveProgress(obj, i, newbie)
 						if progress < (obj.max or 1) then
 							objective = obj
 							goal = obj.max or 1
@@ -8820,29 +8999,27 @@
 				end
 
 				function H.parseActiveQuest()
-					local questKey = H.getActiveQuestKey()
-					if not questKey then
-						return H.parseNewbieQuest()
+					local questKey = H.waitForActiveQuestKey(0.5) or H.getActiveQuestKey()
+					if questKey then
+						local state = H.getQuestState(questKey)
+						if state then
+							if state.completed then
+								return "QuestTurnIn", "Hopsalot", 1, 1, true, questKey, state
+							end
+
+							local kind, targetKey = H.mapQuestKeyToKind(questKey, state)
+							if kind then
+								local objective = H.getPrimaryQuestObjective(state)
+								local goal = objective and objective.goal or 0
+								local current = objective and objective.progress or 0
+								if goal > 0 then
+									return kind, targetKey, goal, current, true, questKey, state
+								end
+							end
+						end
 					end
 
-					local state = H.getQuestState(questKey)
-					if not state then
-						return nil
-					end
-
-					local kind, targetKey = H.mapQuestKeyToKind(questKey, state)
-					if not kind then
-						return nil
-					end
-
-					local objective = H.getPrimaryQuestObjective(state)
-					local goal = objective and objective.goal or 0
-					local current = objective and objective.progress or 0
-					if goal <= 0 then
-						return nil
-					end
-
-					return kind, targetKey, goal, current, true, questKey, state
+					return H.parseNewbieQuest()
 				end
 
 				function H.isNewbieQuestKey(questKey)
@@ -9057,46 +9234,122 @@
 						H.setAutoClicker(false, false)
 						S.autoQuestEnabledClicker = false
 					end
+					if S.autoQuestEnabledKill and H.setAutoKill then
+						H.setAutoKill(false, false)
+						S.autoQuestEnabledKill = false
+					end
+				end
+
+				function H.getHopsalotPart()
+					local model = workspace:FindFirstChild("Sir Hopsalot")
+					if not model then
+						return nil
+					end
+					return model:FindFirstChild("HumanoidRootPart")
+						or model.PrimaryPart
+						or model:FindFirstChildWhichIsA("BasePart")
+				end
+
+				function H.teleportToHopsalot()
+					local part = H.getHopsalotPart()
+					if not part then
+						return false
+					end
+					return H.teleportCharacterTo(part.CFrame * CFrame.new(0, 3, 6))
+				end
+
+				function H.tryEquipQuestGear()
+					local changed = false
+					if H.tryEquipBestSword() then
+						changed = true
+					end
+					if H.tryEquipBestSkin() then
+						changed = true
+					end
+					local hasWeapon = H.getEquippedItemKey("weapon_equipped")
+					local hasSkin = H.getEquippedItemKey("skin_equipped")
+					return changed or hasWeapon ~= nil or hasSkin ~= nil
+				end
+
+				function H.tryEquipQuestPet()
+					local inventory = H.getPetInventoryData()
+					if type(inventory) ~= "table" then
+						return false
+					end
+
+					for _, entry in pairs(inventory) do
+						if type(entry) == "table" and entry.equipped then
+							return true
+						end
+					end
+
+					for key, entry in pairs(inventory) do
+						if type(entry) == "table" and not entry.equipped then
+							local ok = pcall(function()
+								H.callGameService("RequestEquipPet", tostring(key), true)
+							end)
+							if ok then
+								return true
+							end
+						end
+					end
+
+					return false
+				end
+
+				function H.tryJoinArenaForQuest()
+					local aero = H.getGlobal().Aero
+					local arena = aero and aero.Controllers and aero.Controllers.ArenaController
+					if not arena then
+						return false
+					end
+
+					local seconds = nil
+					if arena.SecondsUntilNextInvite then
+						local ok, value = pcall(function()
+							return arena:SecondsUntilNextInvite()
+						end)
+						if ok then
+							seconds = value
+						end
+					end
+
+					if type(seconds) == "number" and seconds > 0 then
+						H.setStatus(string.format("Auto quest: arena opens in %ds", math.ceil(seconds)))
+						return false
+					end
+
+					if arena.SubmitArenaChoice then
+						local ok = pcall(function()
+							arena:SubmitArenaChoice(true)
+						end)
+						return ok
+					end
+
+					return false
 				end
 
 				function H.findQuestPetCratePart()
-					local cheapestCost = math.huge
-					local cheapestPart = nil
+					local petCrates = workspace:FindFirstChild("PetCrates")
+					local pet1 = petCrates and petCrates:FindFirstChild("Pet1")
+					if pet1 and pet1:IsA("BasePart") then
+						return pet1
+					end
 
 					for _, tagged in ipairs(CollectionService:GetTagged("Crate")) do
-						local index = tonumber(string.match(tagged.Name, "^Pet(%d+)$"))
-						if index then
-							for _, slot in ipairs(WORLD_CRATE_SLOTS) do
-								if slot.kind == "pet" and slot.index == index then
-									local cost = select(1, H.getCaveCrateCostInfo(slot))
-									if cost and cost < cheapestCost then
-										cheapestCost = cost
-										cheapestPart = tagged
-									end
-									break
-								end
-							end
+						if tagged.Name == "Pet1" and tagged:IsA("BasePart") then
+							return tagged
 						end
 					end
 
-					return cheapestPart
+					return nil
 				end
 
 				function H.getCheapestPetCrateSlot()
-					local cheapestSlot = nil
-					local cheapestCost = math.huge
-
-					for _, slot in ipairs(WORLD_CRATE_SLOTS) do
-						if slot.kind == "pet" then
-							local cost = select(1, H.getCaveCrateCostInfo(slot))
-							if cost and cost < cheapestCost then
-								cheapestCost = cost
-								cheapestSlot = slot
-							end
-						end
+					if H.getAffordableCrateBatchSize(QUEST_PET_HATCH_SLOT, 1) > 0 then
+						return QUEST_PET_HATCH_SLOT
 					end
-
-					return cheapestSlot
+					return nil
 				end
 
 				function H.isPetEquipped(petKey)
@@ -9165,80 +9418,146 @@
 				end
 
 				function H.getQuestPetCrateSlot()
-					for _, slot in ipairs(WORLD_CRATE_SLOTS) do
-						if slot.id == "pet_1" then
-							return slot
+					return QUEST_PET_HATCH_SLOT
+				end
+
+				function H.getPetCrateWorldPart(slot)
+					if not slot or slot.kind ~= "pet" then
+						return nil
+					end
+
+					local index = slot.index or 1
+					local petCrates = workspace:FindFirstChild("PetCrates")
+					local direct = petCrates and petCrates:FindFirstChild("Pet" .. tostring(index))
+					if direct and direct:IsA("BasePart") then
+						return direct
+					end
+
+					for _, tagged in ipairs(CollectionService:GetTagged("Crate")) do
+						if tagged.Name == ("Pet" .. tostring(index)) and tagged:IsA("BasePart") then
+							return tagged
 						end
 					end
-					return {
-						id = "pet_1",
-						kind = "pet",
-						index = 1,
-						title = "Pet 1",
-						desc = "5,000 gold — Cave crate",
-					}
+
+					return nil
 				end
 
-				function H.getQuestPetCratePart()
-					local petCrates = workspace:FindFirstChild("PetCrates")
-					local pet1 = petCrates and petCrates:FindFirstChild("Pet1")
-					if pet1 and pet1:IsA("BasePart") then
-						return pet1
+				function H.getPetInventoryCount()
+					local inventory = H.getPetInventoryData()
+					if type(inventory) ~= "table" then
+						return 0
 					end
-					return H.findQuestPetCratePart()
+
+					local count = 0
+					for _ in pairs(inventory) do
+						count += 1
+					end
+					return count
 				end
 
-				function H.tryClearPetInventoryForQuest(beforeKeys)
-					if not S.autoQuestDeleteRewards or type(beforeKeys) ~= "table" then
-						return false
+				function H.getMaxPetInventory()
+					local constants = H.getSharedConstants()
+					return constants and constants.MAX_PETS or 100
+				end
+
+				function H.scorePetSellPriority(petsMod, entry)
+					if type(entry) ~= "table" then
+						return math.huge
 					end
 
-					local slot = { kind = "pet" }
+					local petType = H.resolvePetEntryType(entry)
+					local data = petType and petsMod and petsMod.Data and (petsMod.Data[petType] or petsMod.Data[tostring(petType)])
+					if not data then
+						return 500000
+					end
+
+					local tier = tonumber(data.Tier) or 1
+					local xp = tonumber(data.XpBoost) or 0
+					local speed = tonumber(data.SpeedBoost) or 0
+					local gold = tonumber(data.GoldBoost) or 0
+					return tier * 1e9 + xp * 1e6 + speed * 1e3 + gold
+				end
+
+				function H.tryMakePetInventorySpaceForQuest(minFree)
+					minFree = math.max(1, tonumber(minFree) or 1)
+					local maxPets = H.getMaxPetInventory()
 					local inventory = H.getPetInventoryData()
 					if type(inventory) ~= "table" then
 						return false
 					end
 
-					local sold = false
+					local count = H.getPetInventoryCount()
+					local needToSell = count + minFree - maxPets
+					if needToSell <= 0 then
+						return true
+					end
+
+					local petsMod = H.getPetsModule()
+					local candidates = {}
 					for key, entry in pairs(inventory) do
-						if type(entry) == "table" and not entry.equipped and not beforeKeys[tostring(key)] then
-							if H.sellCrateReward(slot, key) then
-								sold = true
-							end
+						if type(entry) == "table" and not entry.equipped then
+							table.insert(candidates, {
+								key = key,
+								score = H.scorePetSellPriority(petsMod, entry),
+							})
 						end
 					end
-					return sold
+
+					table.sort(candidates, function(a, b)
+						if a.score == b.score then
+							return tostring(a.key) < tostring(b.key)
+						end
+						return a.score < b.score
+					end)
+
+					local slot = { kind = "pet" }
+					local sold = 0
+					for _, row in ipairs(candidates) do
+						if sold >= needToSell then
+							break
+						end
+						if H.sellCrateReward(slot, row.key) then
+							sold += 1
+						end
+					end
+
+					if sold > 0 then
+						H.setStatus(string.format("Auto quest: sold %d pet(s) for crate space", sold))
+					end
+
+					return sold > 0 or H.getPetInventoryCount() + minFree <= maxPets
 				end
 
-				function H.tryAutoQuestOpenPetCrate()
+				function H.tryAutoQuestOpenPetCrate(remaining)
 					local slot = H.getQuestPetCrateSlot()
 					if not slot then
 						return false
 					end
 
-					local petPart = H.getQuestPetCratePart()
-					if petPart then
-						H.teleportCharacterTo(petPart.CFrame * CFrame.new(0, 3, 0))
-						task.wait(0.1)
+					local hatchCount = math.max(1, tonumber(remaining) or 1)
+					local batchSize = H.getAffordableCrateBatchSize(slot, hatchCount)
+					if batchSize <= 0 then
+						H.setStatus("Auto quest: need gold for Pet 1 crate")
+						return false
+					end
+
+					if S.autoQuestDeleteRewards then
+						H.tryMakePetInventorySpaceForQuest(batchSize)
+					elseif H.getPetInventoryCount() + batchSize > H.getMaxPetInventory() then
+						H.setStatus("Auto quest: pet inventory full")
+						return false
 					end
 
 					local beforeKeys = H.snapshotInventoryKeys(slot)
-
-					if not H.canOpenCaveCrateSlot(slot) then
-						H.tryClearPetInventoryForQuest(beforeKeys)
-						if not H.canOpenCaveCrateSlot(slot) then
-							return false
-						end
-					end
-
-					local batchSize = H.getAffordableCrateBatchSize(slot, 1)
-					if batchSize <= 0 then
-						return false
-					end
-
 					local ok, result = H.invokeOpenCrates(slot, batchSize)
 					if not ok or not result then
-						return false
+						if S.autoQuestDeleteRewards then
+							H.tryMakePetInventorySpaceForQuest(batchSize + 2)
+							ok, result = H.invokeOpenCrates(slot, batchSize)
+						end
+						if not ok or not result then
+							return false
+						end
 					end
 
 					if S.autoQuestDeleteRewards then
@@ -9387,7 +9706,7 @@
 						return false
 					end
 
-					task.wait(0.8)
+					task.wait(0.15)
 					if not H.getActiveQuestKey() then
 						return true
 					end
@@ -9411,7 +9730,7 @@
 						return false
 					end
 
-					for _ = 1, 10 do
+					for attempt = 1, 12 do
 						if questKey then
 							local freshState = H.getQuestState(questKey)
 							if freshState then
@@ -9434,9 +9753,14 @@
 						end
 
 						H.invokeEndQuestRequest()
-						task.wait(0.15)
+						task.wait(0.05)
 
 						if not H.getActiveQuestKey() then
+							if questController and questController.ResetActiveQuest then
+								pcall(function()
+									questController:ResetActiveQuest()
+								end)
+							end
 							return true
 						end
 					end
@@ -9446,6 +9770,20 @@
 					end
 
 					return not H.getActiveQuestKey()
+				end
+
+				function H.tryHandlePendingQuestTurnIn()
+					local questKey = H.getActiveQuestKey()
+					if not questKey or H.isNewbieQuestKey(questKey) then
+						return false
+					end
+
+					local state = H.getQuestState(questKey)
+					if not state or not H.isAutoQuestComplete(state) then
+						return false
+					end
+
+					return H.tryAutoQuestTurnIn(state)
 				end
 
 				function H.waitForQuestInactive(timeoutSeconds)
@@ -9461,15 +9799,43 @@
 
 				function H.runAutoQuestCycle()
 					while S.autoQuestRunning do
-						H.setAutoQuestNoCollide(false)
+						local ok, err = pcall(function()
+							H.setAutoQuestNoCollide(false)
 
-						local kind, targetKey, goal, current, hasFraction, questKey, state = H.parseActiveQuest()
-						if not kind then
-							H.setStatus("Auto quest: starting quest...")
-							H.invokeStartQuestRequest()
-							task.wait(1)
-							continue
-						end
+							if H.tryHandlePendingQuestTurnIn() then
+								H.waitForQuestInactive(3)
+								H.invokeStartQuestRequest()
+								H.resetAutoQuestProgressCounters()
+								S.autoQuestLastKind = nil
+								S.autoQuestLastTarget = nil
+								S.autoQuestLastQuestKey = nil
+								S.autoQuestEggAreaReady = false
+								task.wait(0.2)
+								return
+							end
+
+							local kind, targetKey, goal, current, hasFraction, questKey, state = H.parseActiveQuest()
+							if not kind then
+								H.setStatus("Auto quest: waiting for quest data...")
+								local waitedKey = H.waitForActiveQuestKey(3)
+								if waitedKey then
+									local waitedState = H.getQuestState(waitedKey)
+									if waitedState and waitedState.completed and not H.isNewbieQuestKey(waitedKey) then
+										if H.tryAutoQuestTurnIn(waitedState) then
+											H.waitForQuestInactive(3)
+										end
+										return
+									end
+									kind, targetKey, goal, current, hasFraction, questKey, state = H.parseActiveQuest()
+								end
+							end
+
+							if not kind then
+								H.setStatus("Auto quest: starting quest...")
+								H.invokeStartQuestRequest()
+								task.wait(0.8)
+								return
+							end
 
 						if S.autoQuestLastQuestKey ~= questKey or S.autoQuestLastTarget ~= targetKey then
 							local previousKey = S.autoQuestLastQuestKey
@@ -9478,6 +9844,12 @@
 							end
 							if S.autoQuestLastKind == "Boss" and kind ~= "Boss" then
 								H.cleanupAutoQuestBossFight()
+							end
+							if S.autoQuestLastKind == "ArenaKill" and kind ~= "ArenaKill" then
+								if S.autoQuestEnabledKill and H.setAutoKill then
+									H.setAutoKill(false, false)
+									S.autoQuestEnabledKill = false
+								end
 							end
 							if S.autoQuestLastKind == "Orb" and kind ~= "Orb" then
 								S.autoQuestOrbGroundReady = false
@@ -9512,10 +9884,19 @@
 								end
 							end
 						elseif state and state.objectives then
-							local objective = H.getPrimaryQuestObjective(state)
-							if objective then
-								goal = objective.goal
-								current = objective.progress
+							if H.isNewbieQuestKey(questKey) then
+								local _, _, refreshedGoal, refreshedCurrent, _, _, refreshedState = H.parseNewbieQuest()
+								if refreshedState then
+									state = refreshedState
+									goal = refreshedGoal or goal
+									current = refreshedCurrent or current
+								end
+							else
+								local objective = H.getPrimaryQuestObjective(state)
+								if objective then
+									goal = objective.goal
+									current = objective.progress
+								end
 							end
 						end
 
@@ -9541,10 +9922,21 @@
 							S.autoQuestLastQuestKey = nil
 							S.autoQuestEggAreaReady = false
 							task.wait(0.15)
-							continue
+							return
 						end
 
-						if kind == "Boss" then
+						if kind == "QuestTurnIn" then
+							H.setStatus("Auto quest: turning in...")
+							local rotKey = questKey or H.getActiveQuestKey()
+							if rotKey then
+								local rotState = H.getQuestState(rotKey) or state
+								if rotState and H.tryAutoQuestTurnIn(rotState) then
+									H.waitForQuestInactive(3)
+									H.invokeStartQuestRequest()
+								end
+							end
+							task.wait(0.3)
+						elseif kind == "Boss" then
 							local def = H.getQuestBossDef(targetKey)
 							if not def then
 								task.wait(AUTO_QUEST_POLL)
@@ -9649,19 +10041,23 @@
 						elseif kind == "QuestAccept" then
 							H.setStatus("Auto quest: accepting quest...")
 							H.invokeStartQuestRequest()
+							task.wait(0.1)
+						elseif kind == "ItemEquip" then
+							H.setStatus("Auto quest: equipping gear...")
+							H.tryEquipQuestGear()
 							task.wait(0.3)
-						elseif kind == "QuestTurnIn" then
-							H.setStatus("Auto quest: waiting for quest turn-in...")
-							local rotKey = H.getActiveQuestKey()
-							if rotKey then
-								local rotState = H.getQuestState(rotKey)
-								if rotState and H.isAutoQuestComplete(rotState) then
-									H.tryAutoQuestTurnIn(rotState)
-								end
-							else
-								H.invokeStartQuestRequest()
+						elseif kind == "PetEquip" then
+							H.setStatus("Auto quest: equipping pet...")
+							H.tryEquipQuestPet()
+							task.wait(0.3)
+						elseif kind == "Arena" or kind == "ArenaKill" then
+							if kind == "ArenaKill" and not S.autoKillRunning and H.setAutoKill then
+								H.setAutoKill(true, false)
+								S.autoQuestEnabledKill = true
 							end
-							task.wait(0.3)
+							H.setStatus("Auto quest: joining arena...")
+							H.tryJoinArenaForQuest()
+							task.wait(0.5)
 						elseif kind == "Upgrade" then
 							H.setStatus(string.format("Auto quest: upgrading (%d/%d)", current, goal))
 							if H.tryAutoUpgradeBurst() or H.tryMassUpgradeSkills() then
@@ -9671,13 +10067,25 @@
 							end
 						elseif kind == "PetHatch" then
 							H.setStatus(string.format("Auto quest: hatching pets (%d/%d)", current, goal))
-							H.tryAutoQuestOpenPetCrate()
-							task.wait(0.05)
+							local remaining = math.max(1, (goal or 1) - (current or 0))
+							H.tryAutoQuestOpenPetCrate(remaining)
+						end
+						end)
+
+						if not ok then
+							warn("[ExonHub] Auto quest step error:", err)
+							task.wait(0.35)
 						end
 					end
 
 					H.restoreAutoQuestSubFeatures()
 					H.restoreCharacterMovementState()
+				end
+
+				function H.ensureAutoQuestLoopRunning()
+					if S.autoQuestRunning and not S.autoQuestLoopActive then
+						H.startAutoQuestLoop()
+					end
 				end
 
 				function H.stopAutoQuestLoop()
@@ -13461,11 +13869,15 @@
 					})
 					H.setDropdownSelection(UI.autoUpgradeDropdownElement, H.getAutoUpgradeTargetLabels())
 					H.ensureAutoUpgradeRebirthListener()
+					S.maxOutManagedUpgrade = true
+					S.maxOutEnabledUpgrade = true
+					H.invalidateUpgradeInventorySnapshots()
+					S.autoUpgradeFailStreak = 0
+
 					if not S.autoUpgradeRunning and H.setAutoUpgrade then
-						S.maxOutManagedUpgrade = true
-						S.maxOutEnabledUpgrade = true
 						H.setAutoUpgrade(true, false)
 					else
+						H.ensureAutoUpgradeLoopRunning()
 						H.tryAutoUpgradeBurst()
 					end
 				end
@@ -13495,6 +13907,13 @@
 					if not progress then
 						return false
 					end
+
+					local wasComplete = S.maxOutLastComplete == true
+					if progress.complete and not wasComplete then
+						H.invalidateUpgradeInventorySnapshots()
+						S.autoUpgradeFailStreak = 0
+					end
+					S.maxOutLastComplete = progress.complete == true
 
 					-- Clean junk, keep exact targets + anything better than selected rarity
 					H.tryMaxOutAutoDelete("weapon", tier)
@@ -13543,6 +13962,7 @@
 					elseif not S.autoUpgradeRunning then
 						H.ensureMaxOutUpgradeEnabled()
 					else
+						H.ensureAutoUpgradeLoopRunning()
 						H.tryAutoUpgradeBurst()
 					end
 					return true
@@ -13551,6 +13971,7 @@
 				function H.stopMaxOutLoop()
 					S.maxOutLoopActive = false
 					S.maxOutPhase = "idle"
+					S.maxOutLastComplete = false
 					H.updateMaxOutStatusLabel(nil)
 				end
 
@@ -15529,11 +15950,12 @@
 					S.autoUpgradeRunning = state
 					if state then
 						S.autoUpgradeFailStreak = 0
+						H.invalidateUpgradeInventorySnapshots()
 						H.ensureAutoUpgradeRebirthListener()
 						print("[ExonHub] Auto upgrade ON")
 						H.setStatus("Auto upgrade ON")
 						H.tryAutoUpgradeBurst()
-						H.startAutoUpgradeLoop()
+						H.ensureAutoUpgradeLoopRunning()
 					else
 						H.stopAutoUpgradeLoop()
 						if not S.maxOutRunning then
@@ -15684,7 +16106,11 @@
 				H.setAutoMineRace = H.setAutoMineRaceImpl
 
 				function H.setAutoQuestImpl(state, fromToggle)
+					state = state == true
 					if S.autoQuestRunning == state then
+						if state then
+							H.ensureAutoQuestLoopRunning()
+						end
 						return
 					end
 
@@ -15692,7 +16118,7 @@
 					if state then
 						print("[ExonHub] Auto quest ON")
 						H.setStatus("Auto quest ON")
-						H.startAutoQuestLoop()
+						H.ensureAutoQuestLoopRunning()
 					else
 						H.stopAutoQuestLoop()
 						print("[ExonHub] Auto quest OFF")
