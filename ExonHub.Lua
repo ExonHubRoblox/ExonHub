@@ -200,6 +200,16 @@
 					massUpgradeLoopActive = false,
 					autoUpgradeRunning = false,
 					autoUpgradeLoopActive = false,
+					autoUpgradeFailStreak = 0,
+					autoUpgradeLastRebirthCount = nil,
+					autoUpgradeLastPlayerLevel = nil,
+					autoUpgradeRebirthWatchConns = nil,
+					upgradeInventorySnapshots = {
+						weapon = nil,
+						skin = nil,
+						weaponAt = 0,
+						skinAt = 0,
+					},
 					autoUpgradeTargets = {
 						primary_weapon = true,
 						secondary_weapon = true,
@@ -421,7 +431,10 @@
 				local AUTO_UPGRADE_IDLE_WAIT = 0.01
 				local AUTO_UPGRADE_MAX_STEPS = 10000
 				local AUTO_UPGRADE_CATCHUP_GAP = 5
-				local AUTO_UPGRADE_BULK_MAX_LEVELS = 100
+				local AUTO_UPGRADE_BULK_MAX_LEVELS = 1000
+				local AUTO_UPGRADE_FAIL_REFRESH_AFTER = 3
+				local AUTO_UPGRADE_POST_REBIRTH_WAIT = 0.35
+				local AUTO_UPGRADE_INVENTORY_SNAPSHOT_TTL = 0.4
 				local AUTO_UPGRADE_SLOT_LABELS = { "Primary Weapon", "Secondary Weapon", "Skin" }
 				local AUTO_UPGRADE_LABEL_TO_ID = {
 					["Primary Weapon"] = "primary_weapon",
@@ -3477,41 +3490,242 @@
 					return H.getCurrencyAmount(dataKeys and dataKeys.GOLD or "gold")
 				end
 
+				function H.getRebirthCount()
+					local stats = H.getClientStats()
+					if not stats then
+						return 0
+					end
+
+					for _, key in ipairs({ "rebirth", "rebirths", "rebirth_count" }) do
+						local valueObj = stats:FindFirstChild(key)
+						if valueObj and typeof(valueObj.Value) == "number" then
+							return valueObj.Value
+						end
+					end
+					return 0
+				end
+
+				function H.invalidateUpgradeInventorySnapshots()
+					S.upgradeInventorySnapshots.weapon = nil
+					S.upgradeInventorySnapshots.skin = nil
+					S.upgradeInventorySnapshots.weaponAt = 0
+					S.upgradeInventorySnapshots.skinAt = 0
+				end
+
+				function H.getUpgradeInventorySnapshot(kind, forceRefresh)
+					local snapshotKey = kind == "weapon" and "weapon" or "skin"
+					local atKey = snapshotKey .. "At"
+					local now = os.clock()
+					local snapshots = S.upgradeInventorySnapshots
+
+					if not forceRefresh
+						and snapshots[snapshotKey]
+						and (now - (snapshots[atKey] or 0)) < AUTO_UPGRADE_INVENTORY_SNAPSHOT_TTL
+					then
+						return snapshots[snapshotKey]
+					end
+
+					local aero = H.getGlobal().Aero
+					local gameDataService = aero and aero.Services and aero.Services.GameDataService
+					if not gameDataService then
+						return nil
+					end
+
+					local ok, data = pcall(function()
+						if kind == "weapon" and gameDataService.GetPlayerWeapons then
+							return gameDataService:GetPlayerWeapons(player)
+						end
+						if kind ~= "weapon" and gameDataService.GetPlayerSkins then
+							return gameDataService:GetPlayerSkins(player)
+						end
+						return nil
+					end)
+
+					if ok and type(data) == "table" then
+						snapshots[snapshotKey] = data
+						snapshots[atKey] = now
+						return data
+					end
+
+					return nil
+				end
+
+				function H.lookupUpgradeInventoryEntry(inventory, entry)
+					if not inventory or not entry or not entry.key then
+						return nil
+					end
+
+					return inventory[entry.key]
+						or inventory[tostring(entry.key)]
+						or inventory[tonumber(entry.key)]
+				end
+
+				function H.onPlayerRebirthDetected()
+					H.invalidateUpgradeInventorySnapshots()
+					S.autoUpgradeFailStreak = 0
+					S.autoUpgradeLastRebirthCount = H.getRebirthCount()
+					S.autoUpgradeLastPlayerLevel = H.getPlayerLevel()
+
+					if S.autoUpgradeRunning or (S.maxOutRunning and S.maxOutPhase == "upgrading") then
+						task.defer(function()
+							task.wait(AUTO_UPGRADE_POST_REBIRTH_WAIT)
+							H.invalidateUpgradeInventorySnapshots()
+							if S.maxOutRunning and S.maxOutPhase == "upgrading" then
+								local progress = H.getMaxOutProgress(H.normalizeMaxOutTier(S.maxOutTier))
+								if progress and progress.complete then
+									H.equipMaxOutGear(progress)
+								end
+							end
+							H.tryAutoUpgradeBurst()
+						end)
+					end
+				end
+
+				function H.ensureAutoUpgradeRebirthListener()
+					if S.autoUpgradeRebirthWatchConns then
+						return
+					end
+
+					local stats = H.getClientStats()
+					if not stats then
+						return
+					end
+
+					S.autoUpgradeLastRebirthCount = H.getRebirthCount()
+					S.autoUpgradeLastPlayerLevel = H.getPlayerLevel()
+					S.autoUpgradeRebirthWatchConns = {}
+
+					local function track(conn)
+						table.insert(S.autoUpgradeRebirthWatchConns, conn)
+					end
+
+					for _, key in ipairs({ "rebirth", "rebirths", "rebirth_count" }) do
+						local valueObj = stats:FindFirstChild(key)
+						if valueObj then
+							track(valueObj.Changed:Connect(function(newValue)
+								local last = S.autoUpgradeLastRebirthCount
+								if type(newValue) == "number" and (last == nil or newValue > last) then
+									H.onPlayerRebirthDetected()
+								end
+							end))
+						end
+					end
+
+					local levelValue = stats:FindFirstChild("level")
+					if levelValue then
+						track(levelValue.Changed:Connect(function(newLevel)
+							local lastLevel = S.autoUpgradeLastPlayerLevel
+							if type(newLevel) == "number" and type(lastLevel) == "number" and newLevel < lastLevel - 5 then
+								H.onPlayerRebirthDetected()
+							end
+							S.autoUpgradeLastPlayerLevel = newLevel
+						end))
+					end
+				end
+
+				function H.teardownAutoUpgradeRebirthListener()
+					if S.autoUpgradeRebirthWatchConns then
+						for _, conn in ipairs(S.autoUpgradeRebirthWatchConns) do
+							pcall(function()
+								conn:Disconnect()
+							end)
+						end
+						S.autoUpgradeRebirthWatchConns = nil
+					end
+				end
+
+				function H.resolveUpgradeEntryKey(entry)
+					if not entry or not entry.key then
+						return nil
+					end
+
+					local inventory
+					if entry.kind == "weapon" then
+						inventory = H.getWeaponInventoryData()
+					else
+						inventory = H.getSkinInventoryData()
+					end
+
+					if not inventory then
+						return tostring(entry.key)
+					end
+
+					return H.resolveInventoryKey(inventory, entry.key)
+				end
+
+				function H.isValidUpgradeEntry(entry)
+					return H.getUpgradeInventoryEntry(entry) ~= nil
+				end
+
+				function H.appendUpgradeEntry(entries, key, kind, order)
+					if not key or key == "0" then
+						return
+					end
+
+					local entry = {
+						key = tostring(key),
+						kind = kind,
+						order = order,
+					}
+					if H.isValidUpgradeEntry(entry) then
+						local resolved = H.resolveUpgradeEntryKey(entry)
+						if resolved ~= nil then
+							entry.key = tostring(resolved)
+						end
+						table.insert(entries, entry)
+					end
+				end
+
+				function H.getMaxOutUpgradeEntries()
+					if not S.maxOutRunning or S.maxOutPhase ~= "upgrading" then
+						return nil
+					end
+
+					local progress = H.getMaxOutProgress(H.normalizeMaxOutTier(S.maxOutTier))
+					if not progress or not progress.complete then
+						return nil
+					end
+
+					local entries = {}
+					local targets = S.autoUpgradeTargets
+
+					if targets.primary_weapon and progress.weaponKeys and progress.weaponKeys[1] then
+						H.appendUpgradeEntry(entries, progress.weaponKeys[1].key, "weapon", 1)
+					end
+
+					if targets.secondary_weapon and H.canDualWieldNow() and progress.weaponKeys and progress.weaponKeys[2] then
+						H.appendUpgradeEntry(entries, progress.weaponKeys[2].key, "weapon", 2)
+					end
+
+					if targets.skin and progress.skinKeys and progress.skinKeys[1] then
+						H.appendUpgradeEntry(entries, progress.skinKeys[1].key, "skin", 3)
+					end
+
+					if #entries > 0 then
+						return entries
+					end
+					return nil
+				end
+
 				function H.getEquippedUpgradeEntries()
+					local maxOutEntries = H.getMaxOutUpgradeEntries()
+					if maxOutEntries and #maxOutEntries > 0 then
+						return maxOutEntries
+					end
+
 					local entries = {}
 					local targets = S.autoUpgradeTargets
 
 					if targets.primary_weapon then
-						local key = H.getEquippedItemKey("weapon_equipped")
-						if key then
-							table.insert(entries, {
-								key = key,
-								kind = "weapon",
-								order = 1,
-							})
-						end
+						H.appendUpgradeEntry(entries, H.getEquippedItemKey("weapon_equipped"), "weapon", 1)
 					end
 
 					if targets.secondary_weapon and H.canDualWieldNow() then
-						local key = H.getEquippedItemKey("offhand_equipped")
-						if key and key ~= "0" then
-							table.insert(entries, {
-								key = key,
-								kind = "weapon",
-								order = 2,
-							})
-						end
+						H.appendUpgradeEntry(entries, H.getEquippedItemKey("offhand_equipped"), "weapon", 2)
 					end
 
 					if targets.skin then
-						local key = H.getEquippedItemKey("skin_equipped")
-						if key then
-							table.insert(entries, {
-								key = key,
-								kind = "skin",
-								order = 3,
-							})
-						end
+						H.appendUpgradeEntry(entries, H.getEquippedItemKey("skin_equipped"), "skin", 3)
 					end
 
 					return entries
@@ -3529,18 +3743,16 @@
 						inventory = H.getSkinInventoryData()
 					end
 
-					if not inventory then
-						return nil
+					local data = H.lookupUpgradeInventoryEntry(inventory, entry)
+					if data then
+						return data
 					end
 
-					return inventory[entry.key] or inventory[tostring(entry.key)] or inventory[tonumber(entry.key)]
+					inventory = H.getUpgradeInventorySnapshot(entry.kind, S.autoUpgradeFailStreak >= AUTO_UPGRADE_FAIL_REFRESH_AFTER)
+					return H.lookupUpgradeInventoryEntry(inventory, entry)
 				end
 
 				function H.getUpgradeEntryLevel(entry)
-					if entry and entry.level ~= nil then
-						return entry.level
-					end
-
 					local data = H.getUpgradeInventoryEntry(entry)
 					if not data then
 						return 0
@@ -3550,8 +3762,7 @@
 
 				function H.syncUpgradeLevelCache(entries)
 					for _, entry in ipairs(entries) do
-						local data = H.getUpgradeInventoryEntry(entry)
-						entry.level = data and (data.upgrades or 0) or 0
+						entry.level = H.getUpgradeEntryLevel(entry)
 					end
 				end
 
@@ -3601,7 +3812,8 @@
 					local minLevel = math.huge
 					local maxLevel = -math.huge
 					for _, entry in ipairs(entries) do
-						local level = entry.level or 0
+						local level = H.getUpgradeEntryLevel(entry)
+						entry.level = level
 						if level < minLevel then
 							minLevel = level
 						end
@@ -3617,8 +3829,10 @@
 
 				function H.sortUpgradeEntries(entries)
 					table.sort(entries, function(a, b)
-						local aLevel = a.level or 0
-						local bLevel = b.level or 0
+						local aLevel = H.getUpgradeEntryLevel(a)
+						local bLevel = H.getUpgradeEntryLevel(b)
+						a.level = aLevel
+						b.level = bLevel
 						if aLevel ~= bLevel then
 							return aLevel < bLevel
 						end
@@ -3638,27 +3852,64 @@
 						return false
 					end
 
-					if entry.kind == "weapon" then
-						return H.isUpgradeSuccess(H.callGameService("UpgradeWeapon", entry.key))
+					local itemKey = H.resolveUpgradeEntryKey(entry)
+					if itemKey == nil then
+						return false
 					end
 
-					return H.isUpgradeSuccess(H.callGameService("UpgradeSkin", entry.key))
+					if entry.kind == "weapon" then
+						return H.isUpgradeSuccess(H.callGameService("UpgradeWeapon", itemKey))
+					end
+
+					return H.isUpgradeSuccess(H.callGameService("UpgradeSkin", itemKey))
 				end
 
 				function H.requestMaxUpgradeEntry(entry)
 					if not entry or not entry.key then
 						return false
 					end
-					return H.isUpgradeSuccess(H.callGameService("RequestMaxUpgradeItem", H.getUpgradeItemType(entry), entry.key))
+
+					local itemKey = H.resolveUpgradeEntryKey(entry)
+					if itemKey == nil then
+						return false
+					end
+
+					return H.isUpgradeSuccess(H.callGameService("RequestMaxUpgradeItem", H.getUpgradeItemType(entry), itemKey))
+				end
+
+				function H.getLowestUpgradeEntry(entries)
+					local bestEntry = nil
+					local bestLevel = math.huge
+					for _, entry in ipairs(entries) do
+						local level = H.getUpgradeEntryLevel(entry)
+						entry.level = level
+						if level < bestLevel then
+							bestLevel = level
+							bestEntry = entry
+						end
+					end
+					return bestEntry
+				end
+
+				function H.tryRequestMaxUpgradeEntries(entries)
+					H.sortUpgradeEntries(entries)
+					for _, entry in ipairs(entries) do
+						if H.requestMaxUpgradeEntry(entry) then
+							return true
+						end
+					end
+					return false
 				end
 
 				function H.tryBalancedUpgradeRound(entries, targetLevel)
 					local changed = false
 					H.sortUpgradeEntries(entries)
 					for _, entry in ipairs(entries) do
-						if (entry.level or 0) == targetLevel then
+						local liveLevel = H.getUpgradeEntryLevel(entry)
+						entry.level = liveLevel
+						if liveLevel == targetLevel then
 							if H.tryUpgradeEquippedEntry(entry) then
-								entry.level = (entry.level or 0) + 1
+								entry.level = liveLevel + 1
 								changed = true
 							end
 						end
@@ -3673,7 +3924,8 @@
 
 					local minLevel = math.huge
 					for _, entry in ipairs(entries) do
-						local level = entry.level or 0
+						local level = H.getUpgradeEntryLevel(entry)
+						entry.level = level
 						if level < minLevel then
 							minLevel = level
 						end
@@ -3706,11 +3958,19 @@
 				function H.tryAutoUpgradeBurst()
 					local entries = H.getEquippedUpgradeEntries()
 					if #entries == 0 then
-						return false
+						if S.autoUpgradeFailStreak >= AUTO_UPGRADE_FAIL_REFRESH_AFTER then
+							H.invalidateUpgradeInventorySnapshots()
+							entries = H.getEquippedUpgradeEntries()
+						end
+						if #entries == 0 then
+							S.autoUpgradeFailStreak += 1
+							return false
+						end
 					end
 
 					local constants = H.getSharedConstants()
 					if not constants then
+						S.autoUpgradeFailStreak += 1
 						return false
 					end
 
@@ -3721,67 +3981,100 @@
 						return false
 					end
 
+					local lowestEntry = H.getLowestUpgradeEntry(entries)
+					if lowestEntry and H.requestMaxUpgradeEntry(lowestEntry) then
+						S.autoUpgradeFailStreak = 0
+						return true
+					end
+
 					if #entries == 1 then
-						return H.requestMaxUpgradeEntry(entries[1])
-					end
-
-					local minLevel = math.huge
-					local secondMin = math.huge
-					local minCount = 0
-					for _, entry in ipairs(entries) do
-						local level = entry.level or 0
-						if level < minLevel then
-							secondMin = minLevel
-							minLevel = level
-							minCount = 1
-						elseif level == minLevel then
-							minCount += 1
-						elseif level < secondMin then
-							secondMin = level
+						if H.requestMaxUpgradeEntry(entries[1]) then
+							S.autoUpgradeFailStreak = 0
+							return true
 						end
-					end
-
-					if minCount == 1 and secondMin ~= math.huge and (secondMin - minLevel) >= AUTO_UPGRADE_CATCHUP_GAP then
+					else
+						local minLevel = math.huge
+						local secondMin = math.huge
+						local minCount = 0
 						for _, entry in ipairs(entries) do
-							if (entry.level or 0) == minLevel then
-								if H.requestMaxUpgradeEntry(entry) then
-									return true
-								end
-								break
+							local level = H.getUpgradeEntryLevel(entry)
+							entry.level = level
+							if level < minLevel then
+								secondMin = minLevel
+								minLevel = level
+								minCount = 1
+							elseif level == minLevel then
+								minCount += 1
+							elseif level < secondMin then
+								secondMin = level
 							end
 						end
-					end
 
-					if H.getUpgradeLevelSpread(entries) <= 1 then
-						if H.tryBalancedBulkUpgrade(entries, constants, gold) then
+						if minCount == 1 and secondMin ~= math.huge and (secondMin - minLevel) >= AUTO_UPGRADE_CATCHUP_GAP then
+							for _, entry in ipairs(entries) do
+								if H.getUpgradeEntryLevel(entry) == minLevel then
+									if H.requestMaxUpgradeEntry(entry) then
+										S.autoUpgradeFailStreak = 0
+										return true
+									end
+									break
+								end
+							end
+						end
+
+						if H.getUpgradeLevelSpread(entries) <= 1 then
+							if H.tryBalancedBulkUpgrade(entries, constants, gold) then
+								S.autoUpgradeFailStreak = 0
+								return true
+							end
+						end
+
+						local changed = false
+						local steps = 0
+
+						while steps < AUTO_UPGRADE_MAX_STEPS and H.getGoldAmount() > 0 do
+							local roundMin = math.huge
+							for _, entry in ipairs(entries) do
+								local level = H.getUpgradeEntryLevel(entry)
+								entry.level = level
+								if level < roundMin then
+									roundMin = level
+								end
+							end
+							if roundMin == math.huge then
+								break
+							end
+
+							if not H.tryBalancedUpgradeRound(entries, roundMin) then
+								break
+							end
+
+							changed = true
+							steps += 1
+						end
+
+						if changed then
+							S.autoUpgradeFailStreak = 0
+							return true
+						end
+
+						if H.tryRequestMaxUpgradeEntries(entries) then
+							S.autoUpgradeFailStreak = 0
 							return true
 						end
 					end
 
-					local changed = false
-					local steps = 0
-
-					while steps < AUTO_UPGRADE_MAX_STEPS and H.getGoldAmount() > 0 do
-						local roundMin = math.huge
-						for _, entry in ipairs(entries) do
-							local level = entry.level or 0
-							if level < roundMin then
-								roundMin = level
-							end
+					S.autoUpgradeFailStreak += 1
+					if S.autoUpgradeFailStreak >= AUTO_UPGRADE_FAIL_REFRESH_AFTER then
+						H.invalidateUpgradeInventorySnapshots()
+						S.autoUpgradeFailStreak = 0
+						entries = H.getEquippedUpgradeEntries()
+						if #entries > 0 and H.tryRequestMaxUpgradeEntries(entries) then
+							return true
 						end
-						if roundMin == math.huge then
-							break
-						end
-
-						if not H.tryBalancedUpgradeRound(entries, roundMin) then
-							break
-						end
-
-						changed = true
-						steps += 1
 					end
 
-					return changed
+					return false
 				end
 
 				function H.stopAutoUpgradeLoop()
@@ -9606,6 +9899,7 @@
 					if ok then
 						print("[ExonHub] RebirthRequest sent (level", H.getPlayerLevel(), "target", S.autoRebirthTargetLevel .. ")")
 						H.setStatus("Rebirth requested")
+						H.onPlayerRebirthDetected()
 					else
 						warn("[ExonHub] RebirthRequest failed:", err)
 						H.setStatus("Rebirth failed")
@@ -13116,6 +13410,10 @@
 					S.maxOutEnabledUpgrade = false
 					S.maxOutManagedUpgrade = false
 
+					if not S.autoUpgradeRunning then
+						H.teardownAutoUpgradeRebirthListener()
+					end
+
 					S.maxOutStopping = false
 				end
 
@@ -13162,10 +13460,13 @@
 						"Skin",
 					})
 					H.setDropdownSelection(UI.autoUpgradeDropdownElement, H.getAutoUpgradeTargetLabels())
+					H.ensureAutoUpgradeRebirthListener()
 					if not S.autoUpgradeRunning and H.setAutoUpgrade then
 						S.maxOutManagedUpgrade = true
 						S.maxOutEnabledUpgrade = true
 						H.setAutoUpgrade(true, false)
+					else
+						H.tryAutoUpgradeBurst()
 					end
 				end
 
@@ -13241,6 +13542,8 @@
 						)
 					elseif not S.autoUpgradeRunning then
 						H.ensureMaxOutUpgradeEnabled()
+					else
+						H.tryAutoUpgradeBurst()
 					end
 					return true
 				end
@@ -13333,6 +13636,7 @@
 							"Max Out " .. tostring(S.maxOutTier) .. " — enabling farm + hunting crates"
 						)
 						print("[ExonHub] Max Out ON:", S.maxOutTier)
+						H.ensureAutoUpgradeRebirthListener()
 						H.startMaxOutLoop()
 					end
 
@@ -15224,12 +15528,17 @@
 
 					S.autoUpgradeRunning = state
 					if state then
+						S.autoUpgradeFailStreak = 0
+						H.ensureAutoUpgradeRebirthListener()
 						print("[ExonHub] Auto upgrade ON")
 						H.setStatus("Auto upgrade ON")
 						H.tryAutoUpgradeBurst()
 						H.startAutoUpgradeLoop()
 					else
 						H.stopAutoUpgradeLoop()
+						if not S.maxOutRunning then
+							H.teardownAutoUpgradeRebirthListener()
+						end
 						print("[ExonHub] Auto upgrade OFF")
 						H.setStatus("Auto upgrade OFF")
 					end
