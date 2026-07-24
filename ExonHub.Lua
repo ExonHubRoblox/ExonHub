@@ -1,23 +1,23 @@
 					local Players = game:GetService("Players")
 
 					do
-						local realPrint = print
-						local realWarn = warn
+						if not _G.__ExonHubRealPrint then
+							_G.__ExonHubRealPrint = print
+							_G.__ExonHubRealWarn = warn
+						end
+						local realPrint = _G.__ExonHubRealPrint
+						local realWarn = _G.__ExonHubRealWarn
 
-						local function formatExonHubLine(...)
+						local function combineExonHubArgs(...)
 							local count = select("#", ...)
 							if count == 0 then
 								return ""
 							end
-							local first = tostring(select(1, ...))
-							if first == "[ExonHub]" and count >= 2 then
-								local rest = tostring(select(2, ...))
-								for i = 3, count do
-									rest = rest .. " " .. tostring(select(i, ...))
-								end
-								return "[ExonHub] " .. rest
+							local parts = {}
+							for i = 1, count do
+								parts[i] = tostring(select(i, ...))
 							end
-							return first
+							return table.concat(parts, " ")
 						end
 
 						local function keepExonHubLine(line)
@@ -25,20 +25,41 @@
 								or line:find("[ExonHub] Loaded", 1, true) ~= nil
 						end
 
-						function print(...)
-							local line = formatExonHubLine(...)
+						local function filteredPrint(...)
+							local line = combineExonHubArgs(...)
 							if line:find("[ExonHub]", 1, true) and not keepExonHubLine(line) then
 								return
 							end
 							realPrint(...)
 						end
 
-						function warn(...)
-							local line = formatExonHubLine(...)
+						local function filteredWarn(...)
+							local line = combineExonHubArgs(...)
 							if line:find("[ExonHub]", 1, true) then
 								return
 							end
 							realWarn(...)
+						end
+
+						print = filteredPrint
+						warn = filteredWarn
+						_G.print = filteredPrint
+						_G.warn = filteredWarn
+						if type(getgenv) == "function" then
+							local genv = getgenv()
+							if type(genv) == "table" then
+								genv.print = filteredPrint
+								genv.warn = filteredWarn
+							end
+						end
+						if type(getrenv) == "function" then
+							pcall(function()
+								local renv = getrenv()
+								if type(renv) == "table" then
+									renv.print = filteredPrint
+									renv.warn = filteredWarn
+								end
+							end)
 						end
 					end
 
@@ -699,8 +720,8 @@
 						return _G
 					end
 
-					function H.setStatus(text)
-						print("[ExonHub]", text)
+					function H.setStatus(_text)
+						-- status is UI-only; never spam F9
 					end
 
 					function H.truncateText(text, maxLen)
@@ -1354,7 +1375,6 @@
 							if ok then
 								local data, name, mime = normalizeCapture(result)
 								if data then
-									print("[ExonHub] Discord log screenshot captured")
 									return data, name, mime
 								end
 							end
@@ -1371,7 +1391,6 @@
 						for _, path in ipairs(pathCandidates) do
 							local data, name, mime = tryPathCapture(path)
 							if data then
-								print("[ExonHub] Discord log screenshot captured from", path)
 								return data, name, mime
 							end
 						end
@@ -1382,7 +1401,6 @@
 								if existsOk and exists then
 									local readOk, data = pcall(readfile, path)
 									if readOk and type(data) == "string" and #data > 128 then
-										print("[ExonHub] Discord log screenshot loaded from", path)
 										return data, "screenshot.png", "image/png"
 									end
 								end
@@ -3278,7 +3296,6 @@
 						S.suppressSettingsPersist = false
 						S.pendingSettingsRestore = nil
 						H.saveSettingsSnapshot(true)
-						print("[ExonHub] Restored saved settings")
 						return true
 					end
 
@@ -3569,9 +3586,7 @@
 									sent = H.postDiscordWebhook(webhook, payload)
 								end
 
-								if sent then
-									print("[ExonHub] Discord log sent")
-								else
+								if not sent then
 									local fallback = {
 										username = EXONHUB_DISCORD_BOT_NAME,
 										content = string.format(
@@ -17568,7 +17583,6 @@
 
 						ok, err = pcall(function()
 							H.createUI()
-							print("[ExonHub] UI created")
 
 							if not H.restoreSavedSettingsOnLoad() then
 								H.setAntiAfk(true, false)
