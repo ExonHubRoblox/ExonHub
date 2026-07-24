@@ -227,7 +227,7 @@
 					local GOLDEN_EGG_NAME = "Egg"
 					local GOLDEN_EGG_TP_OFFSET = Vector3.new(0, 3, 0)
 					-- Paste your Discord channel webhook URL here (Server Settings → Integrations → Webhooks)
-					local EXONHUB_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1530233335656484964/8EfDF15awPiTKZlEOHsq3WE0Hu2z8sD4g3fAutSt23km968vTBo7yrvShfdHDloJMwCw"
+					local EXONHUB_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1530236811597844540/s6Or6eml33HEmptGDtp6nMzSLNdBZ7m7C0cFGVxjo0FF0kcwNoGCWOlLXq84aDzdDt8o"
 					local EXONHUB_DISCORD_BOT_NAME = "Exon Hub"
 					local EXONHUB_ICON_ASSET_ID = 131372483038871
 					local EXONHUB_ICON_ASSET = "rbxassetid://" .. tostring(EXONHUB_ICON_ASSET_ID)
