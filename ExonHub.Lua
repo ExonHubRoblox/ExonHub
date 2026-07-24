@@ -23,6 +23,7 @@
 						local function keepExonHubLine(line)
 							return line:find("[ExonHub] Loading", 1, true) ~= nil
 								or line:find("[ExonHub] Loaded", 1, true) ~= nil
+								or line:find("[ExonHub] Key system ", 1, true) ~= nil
 						end
 
 						local function filteredPrint(...)
@@ -2178,20 +2179,24 @@
 						return false, lastErr
 					end
 
+					function H.printKeySystemStatus(status)
+						if status == "skipped" or status == "loaded" or status == "completed" then
+							print("[ExonHub] Key system " .. status)
+						end
+					end
+
 					function H.waitForDiscordGate()
 						if type(EXONHUB_GATE_API) ~= "string" or EXONHUB_GATE_API == "" then
 							if EXONHUB_GATE_SKIP_IF_OFFLINE then
-								warn("[ExonHub] Discord gate API not set — skipping verify")
+								H.printKeySystemStatus("skipped")
 								return
 							end
 							failStartup("Discord gate is enabled but EXONHUB_GATE_API is empty. Set your bot URL in ExonHub.Lua.")
 						end
 
-						print("[ExonHub] Connecting to Discord gate...")
-
 						if not H.isGateApiOnline() then
 							if EXONHUB_GATE_SKIP_IF_OFFLINE then
-								warn("[ExonHub] Discord gate bot offline — skipping verify (start Exon Manager 1 + 2 to enable keys)")
+								H.printKeySystemStatus("skipped")
 								return
 							end
 							failStartup("Discord gate bot is offline. Start Exon Manager 1 and 2, or set EXONHUB_GATE_SKIP_IF_OFFLINE = true.")
@@ -2210,19 +2215,15 @@
 							if H.isGateSessionValid(saved) then
 								H.destroyGateUi()
 								H.applyGateSessionToState(saved)
-								local remaining = math.max(0, saved.expiresAt - os.time())
-								local hours = math.floor(remaining / 3600)
-								local mins = math.floor((remaining % 3600) / 60)
-								print("[ExonHub] Discord gate skipped — valid for", hours, "h", mins, "m")
+								H.printKeySystemStatus("skipped")
 								return
 							end
 						end
 
-						print("[ExonHub] Registering session key...")
 						local registered, regData = H.registerGateSession()
 						if not registered then
 							if EXONHUB_GATE_SKIP_IF_OFFLINE then
-								warn("[ExonHub] Discord gate unreachable — skipping verify:", regData)
+								H.printKeySystemStatus("skipped")
 								return
 							end
 							failStartup(regData or "Failed to register Discord gate session.")
@@ -2231,7 +2232,7 @@
 						if not EXONHUB_GATE_ALWAYS_VERIFY and regData.skip == true and type(regData.discord) == "table" then
 							H.destroyGateUi()
 							H.buildGateSessionFromDiscord(regData.discord, regData.code, regData.expiresAt)
-							print("[ExonHub] Discord gate skipped — server session still valid")
+							H.printKeySystemStatus("skipped")
 							return
 						end
 
@@ -2243,7 +2244,6 @@
 						if EXONHUB_GATE_ALWAYS_VERIFY then
 							local preVerified = H.checkGateCode(code)
 							if preVerified then
-								warn("[ExonHub] Gate code was still verified on server — waiting for fresh /start")
 								for _ = 1, 5 do
 									task.wait(0.4)
 									preVerified = H.checkGateCode(code)
@@ -2255,15 +2255,14 @@
 						end
 
 						H.createDiscordGateUi(code)
-						print("[ExonHub] Discord gate code:", code)
-						print("[ExonHub] Waiting for /start key:" .. code .. " in Discord")
+						H.printKeySystemStatus("loaded")
 
 						while true do
 							task.wait(EXONHUB_GATE_POLL_SECONDS)
 							local verified, discordInfo = H.checkGateCode(code)
 							if verified then
 								local discordName = discordInfo and (discordInfo.displayName or discordInfo.username) or "Discord user"
-								print("[ExonHub] Discord gate verified as", discordName)
+								H.printKeySystemStatus("completed")
 								H.setGateStatus("Verified as " .. discordName .. " — opening hub...")
 								H.buildGateSessionFromDiscord(discordInfo or {}, code)
 								task.wait(0.5)
